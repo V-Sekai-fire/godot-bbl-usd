@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/PixarAnimationStudios/OpenUSD.git
+	branch = release
+	commit = 0b18ad3f840c24eb25e16b795a5b0821cf05126e
+	parent = bb76235221f2f7b4dd494c9af817fa4fe3edb2c5
+	method = merge
+	cmdver = 0.4.6
