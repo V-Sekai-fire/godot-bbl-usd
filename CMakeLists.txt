@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.15)
 project(bbl-usd VERSION 0.1 LANGUAGES C CXX)
 
-add_subdirectory("thirdparty/babble")
 add_subdirectory("thirdparty/openusd")
+add_subdirectory("thirdparty/babble")
 
 option(BUILD_EXAMPLE "Build the example program" OFF)
 
