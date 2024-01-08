@@ -1,9 +1,8 @@
 #include "capi.hpp"
-#include "astutil.hpp"
 #include "bbl-detail.h"
 #include "bblfmt.hpp"
-
-#include <spdlog/spdlog.h>
+#include "spdlog/spdlog.h"
+#include "clang/AST/DeclCXX.h"
 
 #include <memory>
 #include <optional>
@@ -103,7 +102,6 @@ C_API::C_API(Context const& cpp_ctx) : _cpp_ctx(cpp_ctx) {
         std::vector<std::string> mod_functions;
         std::vector<std::string> mod_stdfunctions;
         std::vector<std::string> mod_enums;
-        std::vector<std::string> mod_subclasses;
 
         // Translate all enums
         for (auto const& cpp_enum_id : cpp_mod.enums) {
@@ -138,7 +136,6 @@ C_API::C_API(Context const& cpp_ctx) : _cpp_ctx(cpp_ctx) {
                                enum_name,
                                cpp_enum->comment,
                                std::move(c_variants),
-                               cpp_enum->variants,
                                integer_type,
                            });
             mod_enums.push_back(cpp_enum_id);
@@ -167,9 +164,9 @@ C_API::C_API(Context const& cpp_ctx) : _cpp_ctx(cpp_ctx) {
                         field.comment,
                     });
                 }
-            } catch (std::exception& e) {
+            } catch (MissingTypeBindingException& e) {
                 SPDLOG_ERROR("could not translate a field of {}. Class will be "
-                             "ignored.\n\t{}\n",
+                             "ignored.\n{}",
                              cpp_cls->spelling,
                              e.what());
                 continue;
@@ -191,9 +188,9 @@ C_API::C_API(Context const& cpp_ctx) : _cpp_ctx(cpp_ctx) {
                     _translate_stdfunction(cpp_fun, cpp_mod.name);
                 _stdfunctions.emplace(cpp_fun_id, std::move(c_fun));
                 mod_stdfunctions.push_back(cpp_fun_id);
-            } catch (std::exception& e) {
+            } catch (MissingTypeBindingException& e) {
                 SPDLOG_ERROR("could not translate stdfunction {}. "
-                             "Function will be ignored.\n\t{}\n",
+                             "Function will be ignored.\n{}",
                              cpp_fun->spelling,
                              e.what());
             }
@@ -236,9 +233,9 @@ C_API::C_API(Context const& cpp_ctx) : _cpp_ctx(cpp_ctx) {
 
                     _functions.emplace(function_id, std::move(c_fun));
                     mod_functions.push_back(function_id);
-                } catch (std::exception& e) {
+                } catch (MissingTypeBindingException& e) {
                     SPDLOG_ERROR("could not translate method {} of class {}. "
-                                 "Method will be ignored.\n\t{}\n",
+                                 "Method will be ignored.\n{}",
                                  method->function.name,
                                  cpp_cls->spelling,
                                  e.what());
@@ -255,9 +252,9 @@ C_API::C_API(Context const& cpp_ctx) : _cpp_ctx(cpp_ctx) {
                         ctor, struct_namespace, cpp_class_id);
                     _functions.emplace(ctor_id, std::move(c_fun));
                     mod_functions.push_back(ctor_id);
-                } catch (std::exception& e) {
+                } catch (MissingTypeBindingException& e) {
                     SPDLOG_ERROR("could not translate constructor of class {}. "
-                                 "Constructor will be ignored.\n\t{}\n",
+                                 "Constructor will be ignored.\n{}",
                                  cpp_cls->spelling,
                                  e.what());
                 }
@@ -325,14 +322,20 @@ C_API::C_API(Context const& cpp_ctx) : _cpp_ctx(cpp_ctx) {
 
                         _functions.emplace(function_id, std::move(c_fun));
                         mod_functions.push_back(function_id);
-                    } catch (std::runtime_error& e) {
+                    } catch (MissingTypeBindingException& e) {
                         SPDLOG_ERROR(
-                            "could not translate method {} of smartptr "
-                            "{} to {}. Method will be ignored.\n\t{}\n",
-                            method->function.qualified_name,
-                            smartptr_class_id,
-                            pointee_class_id,
+                            "could not translate method {} of class {}. "
+                            "Method will be ignored.\n{}",
+                            method->function.name,
+                            pointee_cls->spelling,
                             e.what());
+                    } catch (std::runtime_error& e) {
+                        BBL_RETHROW(e,
+                                    "could not translate method {} of smartptr "
+                                    "{} to {}",
+                                    method->function.qualified_name,
+                                    smartptr_class_id,
+                                    pointee_class_id);
                     }
                 }
 
@@ -351,22 +354,6 @@ C_API::C_API(Context const& cpp_ctx) : _cpp_ctx(cpp_ctx) {
                                             cpp_cls->smartptr_is_const);
                 }
             }
-
-            if (cpp_cls->is_superclass) {
-                try {
-                    Subclass sub =
-                        _generate_subclass(cpp_ctx, cpp_cls, struct_name);
-                    std::string subclass_id =
-                        fmt::format("{}_Subclass", cpp_class_id);
-                    _subclasses.emplace(subclass_id, std::move(sub));
-                    mod_subclasses.emplace_back(subclass_id);
-                } catch (std::exception& e) {
-                    SPDLOG_ERROR(
-                        "could not generate subclass for superclass {}.\n\t{}",
-                        cpp_cls->qualified_name,
-                        e.what());
-                }
-            }
         }
 
         // Translate functions
@@ -380,7 +367,7 @@ C_API::C_API(Context const& cpp_ctx) : _cpp_ctx(cpp_ctx) {
 
             } catch (MissingTypeBindingException& e) {
                 SPDLOG_ERROR("could not translate function {}. "
-                             "Function will be ignored.\n\t{}\n",
+                             "Function will be ignored.\n{}",
                              cpp_fun->spelling,
                              e.what());
             }
@@ -488,13 +475,19 @@ auto C_API::_add_base_class_methods(Context const& cpp_ctx,
 
             _functions.emplace(function_id, std::move(c_fun));
             mod_functions.push_back(function_id);
-        } catch (std::runtime_error& e) {
-            SPDLOG_ERROR("could not translate method {} of base "
-                         "{} to {}. Method will be ignored.\n\t{}\n",
-                         method->function.qualified_name,
-                         derived->id,
-                         base_id,
+        } catch (MissingTypeBindingException& e) {
+            SPDLOG_ERROR("could not translate method {} of class {}. "
+                         "Method will be ignored.\n{}",
+                         method->function.name,
+                         base_cls->spelling,
                          e.what());
+        } catch (std::runtime_error& e) {
+            BBL_RETHROW(e,
+                        "could not translate method {} of base "
+                        "{} to {}",
+                        method->function.qualified_name,
+                        derived->id,
+                        base_id);
         }
     }
 }
@@ -514,33 +507,17 @@ auto C_API::_get_c_qtype_as_string(C_QType const& qt,
             return fmt::format("{}{}{}", builtin, s_const, name_with_space);
         } else if (std::holds_alternative<C_StructId>(c_type.kind)) {
             C_StructId struct_id = std::get<C_StructId>(c_type.kind);
-            try {
-                C_Struct const& c_struct = _structs.at(struct_id.id);
-                return fmt::format(
-                    "{}{}{}", c_struct.name, s_const, name_with_space);
-            } catch (std::exception& e) {
-                BBL_RETHROW(
-                    e, "struct id {} not found in structs", struct_id.id);
-            }
+            C_Struct const& c_struct = _structs.at(struct_id.id);
+            return fmt::format(
+                "{}{}{}", c_struct.name, s_const, name_with_space);
         } else if (std::holds_alternative<C_EnumId>(c_type.kind)) {
             C_EnumId enum_id = std::get<C_EnumId>(c_type.kind);
-            try {
-                C_Enum const& c_enum = _enums.at(enum_id.id);
-                return fmt::format(
-                    "{}{}", c_enum.integer_type, name_with_space);
-            } catch (std::exception& e) {
-                BBL_RETHROW(e, "enum id {} not found in enums", enum_id.id);
-            }
+            C_Enum const& c_enum = _enums.at(enum_id.id);
+            return fmt::format("{}{}", c_enum.integer_type, name_with_space);
         } else if (std::holds_alternative<C_StdFunctionId>(c_type.kind)) {
             C_StdFunctionId fun_id = std::get<C_StdFunctionId>(c_type.kind);
-            try {
-                C_StdFunction const& fun = _stdfunctions.at(fun_id.id);
-                return _get_stdfunction_type_as_string(fun, name);
-            } catch (std::exception& e) {
-                BBL_RETHROW(e,
-                            "stdfunction id {} not found in stdfunctions",
-                            fun_id.id);
-            }
+            C_StdFunction const& fun = _stdfunctions.at(fun_id.id);
+            return _get_stdfunction_type_as_string(fun, name);
         } else {
             BBL_THROW("unhandled variant");
         }
@@ -732,8 +709,7 @@ static bool is_opaqueptr(QType const& qt, Context const& ctx) {
 
             Class const* cls = ctx.get_class(id.id);
             if (cls == nullptr) {
-                BBL_THROW("class {} is not bound",
-                          ctx.get_fallback_typename(id.id));
+                BBL_THROW("class {} is not bound", id.id);
             }
 
             if (cls->bind_kind == BindKind::OpaquePtr) {
@@ -773,8 +749,7 @@ static bool is_opaque_ptr_by_value(QType const& qt, Context const& ctx) {
             ClassId const& id = std::get<ClassId>(type.kind);
             Class const* cls = ctx.get_class(id.id);
             if (cls == nullptr) {
-                BBL_THROW("class {} is not bound",
-                          ctx.get_fallback_typename(id.id));
+                BBL_THROW("class {} is not bound", id.id);
             }
             return cls->bind_kind == BindKind::OpaquePtr;
         }
@@ -804,78 +779,6 @@ static QType unwrap_reference(QType const& qt) {
     }
 }
 
-auto get_operator_rename(std::string const& name) -> std::string {
-    if (name.rfind("operator==") != std::string::npos) {
-        return "op_eq";
-    } else if (name.rfind("operator[]") != std::string::npos) {
-        return "op_index";
-    } else if (name.rfind("operator=") != std::string::npos) {
-        return "op_assign";
-    } else if (name.rfind("operator<<=") != std::string::npos) {
-        return "op_lshift_assign";
-    } else if (name.rfind("operator<<") != std::string::npos) {
-        return "op_lshift";
-    } else if (name.rfind("operator<=") != std::string::npos) {
-        return "op_lte";
-    } else if (name.rfind("operator<") != std::string::npos) {
-        return "op_lt";
-    } else if (name.rfind("operator>>=") != std::string::npos) {
-        return "op_rshift_assign";
-    } else if (name.rfind("operator>>") != std::string::npos) {
-        return "op_rshift";
-    } else if (name.rfind("operator>=") != std::string::npos) {
-        return "op_gte";
-    } else if (name.rfind("operator>") != std::string::npos) {
-        return "op_gt";
-    } else if (name.rfind("operator++") != std::string::npos) {
-        return "op_inc";
-    } else if (name.rfind("operator+=") != std::string::npos) {
-        return "op_add_assign";
-    } else if (name.rfind("operator+") != std::string::npos) {
-        return "op_add";
-    } else if (name.rfind("operator-=") != std::string::npos) {
-        return "op_sub_assign";
-    } else if (name.rfind("operator-") != std::string::npos) {
-        return "op_sub";
-    } else if (name.rfind("operator*=") != std::string::npos) {
-        return "op_mul_assign";
-    } else if (name.rfind("operator*") != std::string::npos) {
-        return "op_mul";
-    } else if (name.rfind("operator/=") != std::string::npos) {
-        return "op_div_assign";
-    } else if (name.rfind("operator/") != std::string::npos) {
-        return "op_div";
-    } else if (name.rfind("operator^=") != std::string::npos) {
-        return "op_xor_assign";
-    } else if (name.rfind("operator^") != std::string::npos) {
-        return "op_xor";
-    } else if (name.rfind("operator!=") != std::string::npos) {
-        return "op_neq";
-    } else if (name.rfind("operator!") != std::string::npos) {
-        return "op_not";
-    } else if (name.rfind("operator|=") != std::string::npos) {
-        return "op_bitor_assign";
-    } else if (name.rfind("operator|") != std::string::npos) {
-        return "op_bitor";
-    } else if (name.rfind("operator&&=") != std::string::npos) {
-        return "op_and_assign";
-    } else if (name.rfind("operator&&") != std::string::npos) {
-        return "op_and";
-    } else if (name.rfind("operator&=") != std::string::npos) {
-        return "op_bit_assign";
-    } else if (name.rfind("operator&") != std::string::npos) {
-        return "op_bitand";
-    } else if (name.rfind("operator||=") != std::string::npos) {
-        return "op_or_assign";
-    } else if (name.rfind("operator||") != std::string::npos) {
-        return "op_or";
-    } else if (name.rfind("operator bool") != std::string::npos) {
-        return "op_bool";
-    }
-
-    return name;
-}
-
 auto C_API::_translate_return_type(QType const& cpp_return_type)
     -> std::optional<C_Param> {
     // For return values:
@@ -900,17 +803,22 @@ auto C_API::_translate_return_type(QType const& cpp_return_type)
     //     - wrap the param in another pointer and assign the pointer into it
     //       *result = call()
     //   o if the result is by reference
-    //     - wrap the pointer from the reference conversion in another pointer,
-    //     and assign
-    //       the address of the returned object into that
-    //       *result = &call()
+    //     - use the existing pointer from the reference conversion, and assign
+    //     into that
+    //       *result = call()
     std::optional<C_Param> result;
 
     C_QType return_type = _translate_qtype(cpp_return_type);
     std::string return_name = "_result";
 
     if (!is_void(return_type)) {
-        if (is_opaque_ptr_by_value(cpp_return_type, _cpp_ctx)) {
+        if (is_reference_to_bytes_or_value(cpp_return_type, _cpp_ctx)) {
+            remove_const_on_pointee(return_type);
+            result = C_Param{
+                std::move(return_type),
+                std::move(return_name),
+            };
+        } else if (is_opaque_ptr_by_value(cpp_return_type, _cpp_ctx)) {
             result = C_Param{
                 wrap_in_pointer(wrap_in_pointer(std::move(return_type))),
                 std::move(return_name),
@@ -937,9 +845,8 @@ auto C_API::_translate_method(Method const* method,
     std::string function_name =
         fmt::format("{}_{}",
                     function_prefix,
-                    method->function.rename.empty()
-                        ? get_operator_rename(method->function.name)
-                        : method->function.rename);
+                    method->function.rename.empty() ? method->function.name
+                                                    : method->function.rename);
 
     std::optional<C_Param> result =
         _translate_return_type(method->function.return_type);
@@ -983,14 +890,8 @@ auto C_API::_translate_method(Method const* method,
     std::vector<ExprPtr> body;
     std::vector<ExprPtr> expr_params;
 
-    try {
-        _translate_parameter_list(
-            method->function.params, c_params, expr_params, body);
-    } catch (std::exception& e) {
-        BBL_RETHROW(e,
-                    "could not translate parameter list of method {}",
-                    method->function.qualified_name);
-    }
+    _translate_parameter_list(
+        method->function.params, c_params, expr_params, body);
 
     ExprPtr expr_call =
         ex_call(method->function.name + method->function.template_call,
@@ -1018,7 +919,8 @@ auto C_API::_translate_method(Method const* method,
     if (result.has_value()) {
         // if the function returns a reference, we need to wrap the call in an
         // address operator in order to convert it back to a pointer
-        if (is_lvalue_reference(method->function.return_type)) {
+        if (is_opaqueptr_lvalue_reference(method->function.return_type,
+                                          _cpp_ctx)) {
             receiving_call = ex_address(std::move(receiving_call));
         } else if (is_opaque_ptr_by_value(method->function.return_type,
                                           _cpp_ctx)) {
@@ -1075,9 +977,8 @@ auto C_API::_translate_function(Function const* function,
     -> C_Function {
     // Function name is the name of the struct followed by either the rename or
     // original method name
-    std::string function_name = function->rename.empty()
-                                    ? get_operator_rename(function->name)
-                                    : function->rename;
+    std::string function_name =
+        function->rename.empty() ? function->name : function->rename;
 
     if (!function_prefix.empty()) {
         function_name = fmt::format("{}_{}", function_prefix, function_name);
@@ -1091,14 +992,7 @@ auto C_API::_translate_function(Function const* function,
     std::vector<ExprPtr> body;
     std::vector<ExprPtr> expr_params;
 
-    try {
-        _translate_parameter_list(
-            function->params, c_params, expr_params, body);
-    } catch (std::exception& e) {
-        BBL_RETHROW(e,
-                    "could not translate parameter list of function {}",
-                    function->qualified_name);
-    }
+    _translate_parameter_list(function->params, c_params, expr_params, body);
 
     ExprPtr expr_call =
         ex_call(function->spelling,
@@ -1108,7 +1002,7 @@ auto C_API::_translate_function(Function const* function,
         // if the function returns a reference, we need to wrap the call in an
         // address operator in order to convert it back to a pointer when
         // returning an opaqueptr
-        if (is_lvalue_reference(function->return_type)) {
+        if (is_opaqueptr_lvalue_reference(function->return_type, _cpp_ctx)) {
             expr_call = ex_address(std::move(expr_call));
         } else if (is_opaque_ptr_by_value(function->return_type, _cpp_ctx)) {
             // need to construct a new object on the heap to return
@@ -1191,13 +1085,7 @@ auto C_API::_translate_stdfunction(StdFunction const* stdfunction,
         param_index++;
     }
 
-    try {
-        _translate_parameter_list(named_params, c_params, expr_params, decls);
-    } catch (std::exception& e) {
-        BBL_RETHROW(e,
-                    "could not translate parameter list of stdfunction {}",
-                    stdfunction->spelling);
-    }
+    _translate_parameter_list(named_params, c_params, expr_params, decls);
 
     return C_StdFunction{
         stdfunction,
@@ -1212,10 +1100,6 @@ auto C_API::_translate_stdfunction(StdFunction const* stdfunction,
 auto C_API::_generate_stdfunction_wrapper(std::string const& id,
                                           std::string const& fun_param_name)
     -> ExprPtr {
-    if (_stdfunctions.find(id) == _stdfunctions.end()) {
-        BBL_THROW("could not find stdfunction id {} in stdfunctions", id);
-    }
-
     C_StdFunction const& c_fun = _stdfunctions.at(id);
     StdFunction const* cpp_fun = c_fun.cpp_fun;
 
@@ -1315,207 +1199,6 @@ auto C_API::_generate_stdfunction_wrapper(std::string const& id,
             ->to_string(0));
 }
 
-auto C_API::_generate_subclass(Context const& cpp_ctx,
-                               Class const* super,
-                               std::string const& struct_name) -> Subclass {
-    Subclass sub{*super};
-    sub.name = fmt::format("{}_Subclass", struct_name);
-
-    // translate all virtual methods to virtual functions
-    for (std::string const& method_id : super->methods) {
-        Method const* method = cpp_ctx.get_method(method_id);
-        if (method->is_virtual) {
-
-            C_Function function =
-                _translate_method(method, sub.name, super->id, false);
-            sub.methods.push_back(method_id);
-            sub.c_virtual_methods.emplace_back(
-                _generate_virtual_function(method, std::move(function)));
-        }
-    }
-
-    // translate all constructors
-
-    return sub;
-}
-
-auto C_API::_generate_virtual_function(Method const* method,
-                                       C_Function&& function) const
-    -> C_VirtualFunction {
-    // we need to add on a void* user data to the c params
-    // the body will be the body for calling the c function pointer from c++ in
-    // the trampoline
-
-    // function.params.emplace_back(C_Param{
-    //     wrap_in_pointer(C_QType{nullptr, false, C_Type{BBL_BUILTIN_Void}}),
-    //     "_user_data"});
-
-    std::vector<ExprPtr> expr_c_call_params;
-    for (size_t i = 0; i < method->function.params.size(); ++i) {
-        Param const& cpp_param = method->function.params[i];
-        std::string const& name = function.params[i].name;
-
-        // now we need to handle passing the C++ parameter to C
-        // if the param is pass-by-value and the type is opaqueptr, or if it is
-        // an lvalue reference, then it will be expected as a pointer
-        if (is_by_value(cpp_param.type) &&
-                is_opaqueptr(cpp_param.type, _cpp_ctx) ||
-            is_lvalue_reference(cpp_param.type)) {
-            expr_c_call_params.emplace_back(ex_address(ex_token(name)));
-        } else {
-            expr_c_call_params.emplace_back(ex_token(name));
-        }
-    }
-
-    std::vector<ExprPtr> expr_body;
-
-    if (function.result.has_value()) {
-        C_Param const& c_result = function.result.value();
-        if (is_opaque_ptr_by_value(method->function.return_type, _cpp_ctx)) {
-            // This is a bit nasty. Hopefully there's a better way.
-            // Since the return is an opaqueptr by value, the C function will
-            // allocate a new object into a pointer that we pass as the out
-            // parameter. We need to move that heap allocation to the stack, so
-            // we create a temporary to move the heap allocation into an return
-            // and delete the heap allocation before returning. This will fail
-            // if the return type is not default-constructible.
-            std::string result_ptr_name = fmt::format("{}_ptr", c_result.name);
-
-            expr_body.emplace_back(
-                ex_var_decl(ex_token(_cpp_ctx.get_qtype_as_string(
-                                method->function.return_type)),
-                            ex_token(c_result.name)));
-
-            expr_body.emplace_back(
-                ex_var_decl(ex_token(_cpp_ctx.get_qtype_as_string(
-                                wrap_in_pointer(method->function.return_type))),
-                            ex_token(result_ptr_name)));
-
-            expr_c_call_params.emplace_back(
-                ex_address(ex_token(result_ptr_name)));
-        } else if (is_lvalue_reference(method->function.return_type)) {
-            // we can't create an lvalue ref temporary, so instead we need to
-            // create a pointer instead, then deref it in the lambda return
-            expr_body.emplace_back(ex_var_decl(
-                ex_token(_cpp_ctx.get_qtype_as_string(wrap_in_pointer(
-                    unwrap_reference(method->function.return_type)))),
-                ex_token(c_result.name)));
-            expr_c_call_params.emplace_back(
-                ex_address(ex_token(c_result.name)));
-        } else {
-            // add the variable declaration and pass of the return value
-            expr_body.emplace_back(
-                ex_var_decl(ex_token(_cpp_ctx.get_qtype_as_string(
-                                method->function.return_type)),
-                            ex_token(c_result.name)));
-            expr_c_call_params.emplace_back(
-                ex_address(ex_token(c_result.name)));
-        }
-    }
-
-    // add the pass of the per-function userdata parameter
-    expr_c_call_params.emplace_back(
-        ex_token(fmt::format("_fn_{}_user_data", method->function.name)));
-
-    // create the call expression from the function pointer name and parameter
-    // list and add it to the lambda body
-    ExprPtr expr_c_call =
-        ex_call(fmt::format("_fn_{}", method->function.name),
-                ex_parameter_list(std::move(expr_c_call_params)));
-    expr_body.emplace_back(std::move(expr_c_call));
-
-    if (function.result.has_value()) {
-        C_Param const& c_result = function.result.value();
-        if (is_opaque_ptr_by_value(method->function.return_type, _cpp_ctx)) {
-            std::string result_ptr_name = fmt::format("{}_ptr", c_result.name);
-            expr_body.emplace_back(
-                ex_assign(ex_token(c_result.name),
-                          ex_move(ex_deref(ex_token(result_ptr_name)))));
-
-            expr_body.emplace_back(ex_delete(ex_token(result_ptr_name)));
-            expr_body.emplace_back(ex_return(ex_token(c_result.name)));
-        } else if (is_lvalue_reference(method->function.return_type)) {
-            expr_body.emplace_back(
-                ex_return(ex_deref(ex_token(c_result.name))));
-        } else {
-            expr_body.emplace_back(ex_return(ex_token(c_result.name)));
-        }
-    }
-
-    return C_VirtualFunction{std::move(function.name),
-                             std::move(function.comment),
-                             std::move(function.result),
-                             std::move(function.receiver),
-                             std::move(function.params),
-                             *method,
-                             ex_compound(std::move(expr_body))};
-}
-
-auto C_API::_generate_virtual_function_pointer_declaration(
-    C_VirtualFunction const& fun) const -> std::string {
-    std::string result = fmt::format("typedef int (*{})(", fun.name);
-
-    bool first = true;
-
-    // If the method has a receiver (i.e. it's not static), bind the receiver in
-    // as the first parameter
-    if (std::holds_alternative<C_Param>(fun.receiver)) {
-        auto const& receiver = std::get<C_Param>(fun.receiver);
-        result =
-            fmt::format("{}{}",
-                        result,
-                        _get_c_qtype_as_string(receiver.type, receiver.name));
-
-        first = false;
-    } else if (std::holds_alternative<C_SmartPtr>(fun.receiver)) {
-        auto const& receiver = std::get<C_SmartPtr>(fun.receiver);
-        result = fmt::format("{}{}",
-                             result,
-                             _get_c_qtype_as_string(receiver.smartptr.type,
-                                                    receiver.smartptr.name));
-
-        first = false;
-    }
-
-    // Then do the actual parameters
-    for (C_Param const& c_param : fun.params) {
-        if (first) {
-            first = false;
-        } else {
-            result = fmt::format("{}, ", result);
-        }
-
-        std::string type_string =
-            _get_c_qtype_as_string(c_param.type, c_param.name);
-        result = fmt::format("{}{}", result, type_string);
-    }
-
-    // Next, convert the return type (if it's not void) to an out
-    // parameter at the end of the parameter list, as the actual return type of
-    // the C function will be int to do error reporting
-    if (fun.result.has_value()) {
-        if (first) {
-            first = false;
-        } else {
-            result = fmt::format("{}, ", result);
-        }
-
-        std::string type_string = _get_c_qtype_as_string(
-            fun.result.value().type, fun.result.value().name);
-        result = fmt::format("{}{}", result, type_string);
-    }
-
-    // Finally, add on the void* user data parameter
-    if (!first) {
-        result = fmt::format("{}, ", result);
-    }
-    result = fmt::format("{}void* user_data", result);
-
-    result = fmt::format("{})", result);
-
-    return result;
-}
-
 auto C_API::_translate_parameter_list(std::vector<Param> const& params,
                                       std::vector<C_Param>& c_params,
                                       std::vector<ExprPtr>& expr_params,
@@ -1569,17 +1252,10 @@ auto C_API::_translate_parameter_list(std::vector<Param> const& params,
         std::optional<std::string> std_function_id =
             get_stdfunction_id(param.type);
         if (std_function_id.has_value()) {
-            try {
-                decls.emplace_back(_generate_stdfunction_wrapper(
-                    std_function_id.value(), param_name));
-                expr_params.emplace_back(
-                    ExprToken::create(fmt::format("{}_wrapper", param_name)));
-            } catch (std::exception& e) {
-                BBL_RETHROW(
-                    e,
-                    "could not generate stdfunction wrapper for param {}",
-                    param_name);
-            }
+            decls.emplace_back(_generate_stdfunction_wrapper(
+                std_function_id.value(), param_name));
+            expr_params.emplace_back(
+                ExprToken::create(fmt::format("{}_wrapper", param_name)));
         } else if (auto enum_id = as_lvalue_reference_to_enum(param.type);
                    enum_id.has_value()) {
             // we need to static cast a pointer to the enum type then deref
@@ -1607,14 +1283,12 @@ auto C_API::_translate_parameter_list(std::vector<Param> const& params,
                 ex_reinterpret_cast(ex_token(fmt::format("{}*", enm->spelling)),
                                     ex_token(param_name)));
         } else if (is_lvalue_reference(param.type) ||
-                   is_rvalue_reference(param.type) ||
                    (is_by_value(param.type) &&
                     is_opaque_ptr_by_value(param.type, _cpp_ctx))) {
             expr_params.emplace_back(ex_deref(ExprToken::create(param_name)));
-            // } else if (is_rvalue_reference(param.type)) {
-            //     BBL_THROW("cannot translate function rvalue reference
-            //     parameter {}",
-            //               param_name);
+        } else if (is_rvalue_reference(param.type)) {
+            BBL_THROW("cannot translate function rvalue reference parameter {}",
+                      param_name);
         } else if (is_enum(param.type)) {
             // enums need to be static_cast<>() from their underlying type to
             // the enum explicitly when passing to C++
@@ -1673,11 +1347,7 @@ auto C_API::_translate_constructor(Constructor const* ctor,
     std::vector<ExprPtr> expr_params;
     std::vector<ExprPtr> decls;
 
-    try {
-        _translate_parameter_list(ctor->params, c_params, expr_params, decls);
-    } catch (std::exception& e) {
-        BBL_RETHROW(e, "could not translate parameter list");
-    }
+    _translate_parameter_list(ctor->params, c_params, expr_params, decls);
 
     ExprPtr expr_call =
         ex_call(cls->spelling,
@@ -1757,8 +1427,7 @@ auto C_API::_translate_qtype(QType const& qt) -> C_QType {
             ClassId const& class_id = std::get<ClassId>(type.kind);
 
             if (!_cpp_ctx.has_class(class_id.id)) {
-                BBL_THROW_MTBE("class not bound: {}",
-                               _cpp_ctx.get_fallback_typename(class_id.id));
+                BBL_THROW_MTBE("class {}", class_id.id);
             }
 
             return C_QType{
@@ -1770,8 +1439,7 @@ auto C_API::_translate_qtype(QType const& qt) -> C_QType {
             EnumId const& enum_id = std::get<EnumId>(type.kind);
 
             if (!_cpp_ctx.has_enum(enum_id.id)) {
-                BBL_THROW_MTBE("enum not bound: {}",
-                               _cpp_ctx.get_fallback_typename(enum_id.id));
+                BBL_THROW_MTBE("enum {}", enum_id.id);
             }
 
             return C_QType{
@@ -1783,8 +1451,7 @@ auto C_API::_translate_qtype(QType const& qt) -> C_QType {
             StdFunctionId const& fun_id = std::get<StdFunctionId>(type.kind);
 
             if (!_cpp_ctx.has_stdfunction(fun_id.id)) {
-                BBL_THROW_MTBE("stdfunction not bound: {}",
-                               _cpp_ctx.get_fallback_typename(fun_id.id));
+                BBL_THROW_MTBE("{}", fun_id.id);
             }
 
             return C_QType{
@@ -2060,105 +1727,6 @@ static thread_local std::string _bbl_error_message;
     }
     if (did_any_impl) {
         result = fmt::format("\n{}}}\n\n", result);
-    }
-
-    for (auto const& [sub_id, sub] : _subclasses) {
-
-        // write the function pointer typedefs
-        for (C_VirtualFunction const& fun : sub.c_virtual_methods) {
-            result = fmt::format(
-                "{}{};\n\n",
-                result,
-                _generate_virtual_function_pointer_declaration(fun));
-        }
-
-        result = fmt::format("{}class {} : public {} {{\n",
-                             result,
-                             sub.name,
-                             sub.super.spelling);
-
-        // write the function pointer member variables
-        for (C_VirtualFunction const& fun : sub.c_virtual_methods) {
-            result = fmt::format("{}    {} _fn_{};\n",
-                                 result,
-                                 fun.name,
-                                 fun.method.function.name);
-            // store a void* user data for each function to allow for closures
-            result =
-                fmt::format("{}    void* {}_user_data;\n", result, fun.name);
-        }
-
-        result = fmt::format("{}\npublic:\n", result);
-
-        for (C_VirtualFunction const& fun : sub.c_virtual_methods) {
-            char const* s_const = fun.method.is_const ? " const" : "";
-
-            result =
-                fmt::format("{}    auto {}(", result, fun.method.function.name);
-
-            bool first = true;
-            for (Param const& param : fun.method.function.params) {
-                if (first) {
-                    first = false;
-                } else {
-                    result = fmt::format("{}, ", result);
-                }
-
-                result = fmt::format("{}{} {}",
-                                     result,
-                                     _cpp_ctx.get_qtype_as_string(param.type),
-                                     param.name);
-            }
-
-            result = fmt::format(
-                "{}) -> {}{} override {{\n",
-                result,
-                _cpp_ctx.get_qtype_as_string(fun.method.function.return_type),
-                s_const);
-
-            // first handle the case that an implementation was not provided
-            result = fmt::format(
-                "{}        if (_fn_{} == nullptr) {{\n", result, fun.method.function.name);
-            if (fun.method.is_pure) {
-                // user MUST implement this method. All we can do is give up
-                result =
-                    fmt::format("{}            fprintf(stderr, \"method {} is "
-                                "pure virtual, but no implementation was "
-                                "provided in the subclass\");\n",
-                                result,
-                                fun.method.function.qualified_name);
-                result =
-                    fmt::format("{}            std::terminate();\n", result);
-            } else {
-                // call the superclass
-                bool first = true;
-                result = fmt::format("{}            return {}::{}(",
-                                     result,
-                                     sub.super.spelling,
-                                     fun.method.function.name);
-                for (Param const& param : fun.method.function.params) {
-                    if (first) {
-                        first = false;
-                    } else {
-                        result = fmt::format("{}, ", result);
-                    }
-
-                    result = fmt::format("{}{}", result, param.name);
-                }
-
-                result = fmt::format("{});\n", result);
-            }
-            result = fmt::format("{}        }}\n\n", result);
-
-            // now insert the generated function body that is just the call to
-            // the c function pointer and associated machinery for variable
-            // return
-            result = fmt::format("{}{}", result, fun.body->to_string(2));
-
-            result = fmt::format("{}    }}\n\n", result);
-        }
-
-        result = fmt::format("{}}};\n\n", result);
     }
 
     result = fmt::format("{}extern \"C\" {{\n", result);

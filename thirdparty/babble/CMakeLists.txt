@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION  3.15)
-project(babble VERSION 0.6.0 LANGUAGES C CXX)
+project(babble VERSION 0.4.0 LANGUAGES C CXX)
 
 find_package(Clang REQUIRED)
 string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)"
@@ -7,7 +7,6 @@ string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)"
 set(LLVM_VERSION_MAJOR ${CMAKE_MATCH_1})
 set(LLVM_VERSION_MINOR ${CMAKE_MATCH_2})
 set(LLVM_VERSION_PATCH ${CMAKE_MATCH_3})
-message(STATUS "Found LLVM ${LLVM_VERSION}: ${LLVM_INSTALL_PREFIX}")
 
 set(CMAKE_CXX_STANDARD 17)
 
@@ -30,7 +29,6 @@ if (MSVC)
 endif()
 
 set(BUILD_SHARED_LIBS OFF)
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 add_subdirectory(bbl)
 
@@ -39,13 +37,9 @@ add_subdirectory(bbl)
 set(BABBLE_TRANSLATE $<TARGET_FILE:bbl-translate>)
 set(BABBLE_RESOURCE_DIR "${CLANG_INSTALL_PREFIX}/lib/clang/${LLVM_VERSION_MAJOR}")
 
-# # more complete example bindings
-# add_subdirectory(test/smartptr)
-# add_subdirectory(test/stdfunction)
+# more complete example bindings
+add_subdirectory(test/smartptr)
+add_subdirectory(test/stdfunction)
 
 # plugins
 add_subdirectory(plugins)
-
-# configure and install rez package file
-configure_file(package.py.in ${CMAKE_BINARY_DIR}/package.py)
-install(FILES ${CMAKE_BINARY_DIR}/package.py DESTINATION ${CMAKE_INSTALL_PREFIX})

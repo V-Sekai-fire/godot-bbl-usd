@@ -25,12 +25,12 @@ BBL_MODULE(test027) {
     ;
 
     bbl::Class<FooPtr>("FooPtr")
-        .ctor(bbl::Class<FooPtr>::Ctor<>(), "new")
+        .ctor(bbl::Ctor<FooPtr>(), "new")
         .smartptr_to<Foo>()
         ;
 
     bbl::Class<ConstFooPtr>("ConstFooPtr")
-        .ctor(bbl::Class<ConstFooPtr>::Ctor<>(), "new")
+        .ctor(bbl::Ctor<ConstFooPtr>(), "new")
         .smartptr_to<const Foo>()
         ;
 }

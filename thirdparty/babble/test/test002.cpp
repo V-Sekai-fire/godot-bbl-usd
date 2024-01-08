@@ -6,7 +6,6 @@ namespace qux {
         T _foo;
     public:
         T bar(T const& a);
-        T bar_r(T&& a);
     };
 }
 
@@ -15,13 +14,11 @@ BBL_MODULE(test002) {
     using namespace bbl;
     using namespace qux;
     bbl::Class<Foo<float>>("FooFloat")
-        .m(&Foo<float>::bar)
-        .m(&Foo<float>::bar_r);
+        .m(&Foo<float>::bar);
 
     using FooInt = Foo<int>;
 
     bbl::Class<FooInt>("FooInt")
-        .m(&FooInt::bar)
-        .m(&FooInt::bar_r);
+        .m(&FooInt::bar);
 
 }

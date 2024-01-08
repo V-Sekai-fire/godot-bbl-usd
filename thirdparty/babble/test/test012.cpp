@@ -25,7 +25,7 @@ BBL_MODULE(test012) {
     ;
 
     bbl::Class<qux::Foo>()
-        .ctor(bbl::Class<qux::Foo>::Ctor<>())
+        .ctor(bbl::Ctor<qux::Foo>())
         .m(&qux::Foo::bar)
         ;
 }

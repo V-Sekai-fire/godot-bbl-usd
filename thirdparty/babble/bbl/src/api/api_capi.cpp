@@ -298,13 +298,7 @@ bbl_result_t bbl_capi_get_struct(bbl_capi_t capi, bbl_capi_structid_t id, bbl_ca
         return BBL_RESULT_ArgumentIsNull;
     }
 
-    try {
-        *strct = &capi->get_structs().at(*id);
-    } catch (std::exception& e) {
-        SPDLOG_ERROR("struct id {} not found", *id);
-        return BBL_RESULT_NotFound;
-    }
-
+    *strct = &capi->get_structs().at(*id);
     return BBL_RESULT_Success;
 }
 
@@ -355,13 +349,7 @@ bbl_result_t bbl_capi_get_function(bbl_capi_t capi, bbl_capi_functionid_t id, bb
         return BBL_RESULT_ArgumentIsNull;
     }
 
-    try {
-        *function = &capi->get_functions().at(*id);
-    } catch (std::exception& e) {
-        SPDLOG_ERROR("function id {} not found", *id);
-        return BBL_RESULT_NotFound;
-    }
-
+    *function = &capi->get_functions().at(*id);
     return BBL_RESULT_Success;
 }
 
@@ -397,12 +385,7 @@ bbl_result_t bbl_capi_get_stdfunction(bbl_capi_t capi, bbl_capi_stdfunctionid_t 
         return BBL_RESULT_ArgumentIsNull;
     }
 
-    try {
-        *stdfunction = &capi->get_stdfunctions().at(*id);
-    } catch (std::exception& e) {
-        SPDLOG_ERROR("stdfunction {} not found", *id);
-        return BBL_RESULT_NotFound;
-    }
+    *stdfunction = &capi->get_stdfunctions().at(*id);
     return BBL_RESULT_Success;
 }
 
@@ -423,12 +406,7 @@ bbl_result_t bbl_capi_get_enum(bbl_capi_t capi, bbl_capi_enumid_t id, bbl_capi_e
         return BBL_RESULT_ArgumentIsNull;
     }
 
-    try {
-        *enm = &capi->get_enums().at(*id);
-    } catch (std::exception& e) {
-        SPDLOG_ERROR("enum {} not found", *id);
-        return BBL_RESULT_NotFound;
-    }
+    *enm = &capi->get_enums().at(*id);
     return BBL_RESULT_Success;
 }
 
@@ -824,43 +802,6 @@ bbl_result_t bbl_capi_enum_get_variant(bbl_capi_enum_t enm,
     *name_len = enm->variants[index].first.size();
     *value = enm->variants[index].second.c_str();
     *value_len = enm->variants[index].second.size();
-
-    return BBL_RESULT_Success;
-}
-
-bbl_result_t bbl_capi_enum_get_original_variant(bbl_capi_enum_t enm,
-                                       size_t index,
-                                       char const** name,
-                                       size_t* name_len,
-                                       char const** value,
-                                       size_t* value_len) {
-    *name = nullptr;
-    *name_len = 0;
-    *value = nullptr;
-    *value_len = 0;
-
-    if (enm == nullptr) {
-        return BBL_RESULT_ArgumentIsNull;
-    }
-
-    if (index >= enm->original_variants.size()) {
-        return BBL_RESULT_ArgumentOutOfRange;
-    }
-
-    *name = enm->original_variants[index].first.c_str();
-    *name_len = enm->original_variants[index].first.size();
-    *value = enm->original_variants[index].second.c_str();
-    *value_len = enm->original_variants[index].second.size();
-
-    return BBL_RESULT_Success;
-}
-
-bbl_result_t bbl_capi_enum_get_underlying_type(bbl_capi_enum_t enm, bbl_builtin_t* type) {
-    if (enm == nullptr) {
-        return BBL_RESULT_ArgumentIsNull;
-    }
-
-    *type = enm->integer_type;
 
     return BBL_RESULT_Success;
 }

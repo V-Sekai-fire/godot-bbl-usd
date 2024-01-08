@@ -2,6 +2,7 @@
 #include "astutil.hpp"
 #include "bbl-detail.h"
 #include "bblfmt.hpp"
+#include "process.hpp"
 #include "clang/AST/Expr.h"
 #include "clang/AST/Stmt.h"
 #include "clang/Basic/Specifiers.h"
@@ -90,7 +91,6 @@ bool operator==(QType const& lhs, QType const& rhs) {
     }
 }
 
-// Deep copies the given QType
 QType clone(QType const& qt) {
     if (std::holds_alternative<Type>(qt.type)) {
         const auto& type = std::get<Type>(qt.type);
@@ -121,13 +121,10 @@ QType clone(QType const& qt) {
     }
 }
 
-// Return a copy of this QType wrapped in a pointer, effectively turning a
-// T into a T*
 QType wrap_in_pointer(QType const& qt) {
     return QType{false, Pointer{std::make_unique<QType>(clone(qt))}};
 }
 
-// If the given QType is a T&, return T. Throws otherwise
 static QType unwrap_reference(QType const& qt) {
     if (std::holds_alternative<LValueReference>(qt.type)) {
         LValueReference const& ref = std::get<LValueReference>(qt.type);
@@ -137,7 +134,6 @@ static QType unwrap_reference(QType const& qt) {
     }
 }
 
-/// Simple steady timer
 class Timer {
     using time_point = std::chrono::time_point<std::chrono::steady_clock>;
 
@@ -159,16 +155,12 @@ public:
     }
 };
 
-// Convert the given Type into a string suitable for debug printing
 std::string
 to_string(bbl::Type const& ty, char const* s_const, DeclMaps const& decl_maps) {
-    // Unwrap the kind variant holding the actual type kind
     if (std::holds_alternative<bbl_builtin_t>(ty.kind)) {
         bbl_builtin_t const& builtin = std::get<bbl_builtin_t>(ty.kind);
         return fmt::format("{}{}", builtin, s_const);
     } else if (std::holds_alternative<bbl::ClassId>(ty.kind)) {
-        // Get the class id that this variant holds and use it to look up the
-        // corresponding class in the given decl_maps.
         bbl::ClassId const& classid = std::get<bbl::ClassId>(ty.kind);
         std::string name;
         if (auto it = decl_maps.class_map.find(classid.id);
@@ -206,7 +198,6 @@ to_string(bbl::Type const& ty, char const* s_const, DeclMaps const& decl_maps) {
     }
 }
 
-// Convert the given type into a string suitable for debug printing
 std::string to_string(QType const& qt, DeclMaps const& decl_maps) {
     char const* s_const = qt.is_const ? " const" : "";
 
@@ -246,8 +237,44 @@ std::string to_string(TemplateArg const& arg, DeclMaps const& decl_maps) {
     }
 }
 
-// Convert clang's BuiltinType to a bbl_builtin_t
-// Throws on an unknown builtin
+static auto expr_to_string(clang::Expr const* expr, clang::ASTContext* ctx)
+    -> std::string {
+    static clang::PrintingPolicy print_policy(ctx->getLangOpts());
+    // print_policy.FullyQualifiedName = 1;
+    // print_policy.SuppressScope = 0;
+    // print_policy.SuppressSpecifiers = 0;
+    // print_policy.SuppressElaboration = 0;
+    // print_policy.SuppressInitializers = 0;
+    // print_policy.PrintCanonicalTypes = 1;
+    // print_policy.SuppressTemplateArgsInCXXConstructors = 0;
+    // print_policy.SuppressDefaultTemplateArgs = 0;
+
+    std::string expr_string;
+    llvm::raw_string_ostream stream(expr_string);
+    expr->printPretty(stream, nullptr, print_policy);
+    stream.flush();
+    return expr_string;
+}
+
+static auto decl_to_string(clang::Decl const* decl, clang::ASTContext* ctx)
+    -> std::string {
+    static clang::PrintingPolicy print_policy(ctx->getLangOpts());
+    print_policy.FullyQualifiedName = 1;
+    print_policy.SuppressScope = 0;
+    print_policy.SuppressSpecifiers = 0;
+    // print_policy.SuppressElaboration = 0;
+    print_policy.SuppressInitializers = 0;
+    print_policy.PrintCanonicalTypes = 1;
+    print_policy.SuppressTemplateArgsInCXXConstructors = 0;
+    print_policy.SuppressDefaultTemplateArgs = 0;
+
+    std::string expr_string;
+    llvm::raw_string_ostream stream(expr_string);
+    decl->print(stream, print_policy);
+    stream.flush();
+    return expr_string;
+}
+
 auto extract_builtin_type(clang::BuiltinType const* btype) -> bbl_builtin_t {
 #define CASE(VAR)                                                              \
     case clang::BuiltinType::VAR:                                              \
@@ -255,7 +282,6 @@ auto extract_builtin_type(clang::BuiltinType const* btype) -> bbl_builtin_t {
 
     switch (btype->getKind()) {
         CASE(Void)
-        CASE(Bool)
         CASE(Char_S)
         CASE(Short)
         CASE(Int)
@@ -274,8 +300,6 @@ auto extract_builtin_type(clang::BuiltinType const* btype) -> bbl_builtin_t {
     }
 }
 
-// Convert the given clang::QualType to a QType
-// Throws when the QualType represents a type we don't handle yet
 auto Context::extract_qualtype(clang::QualType const& qt,
                                clang::MangleContext* mangle_ctx) -> QType {
     bool is_const = qt.isConstQualified();
@@ -412,10 +436,10 @@ auto Context::extract_qualtype(clang::QualType const& qt,
         _decl_maps.typename_map[id] = et->getDecl()->getNameAsString();
 
         // check that the user has bound the corresponding enum
-        // if (!_decl_maps.enum_map.contains(id)) {
-        //     BBL_THROW("enum {} has not been bound",
-        //               et->getDecl()->getQualifiedNameAsString());
-        // }
+        if (!_decl_maps.enum_map.contains(id)) {
+            BBL_THROW("enum {} has not been bound",
+                      et->getDecl()->getQualifiedNameAsString());
+        }
 
         return QType{is_const, Type{EnumId{id}}};
     } else if (clang::ParenType const* pt =
@@ -437,9 +461,6 @@ auto Context::extract_qualtype(clang::QualType const& qt,
     }
 }
 
-// Convert a TemplateArgument to one or many TemplateArgs.
-// A single TemplateArgument may expand to many in the case that it is a
-// parameter pack
 auto Context::extract_single_template_arg(
     clang::TemplateArgument const& arg,
     std::vector<TemplateArg>& template_args,
@@ -461,8 +482,6 @@ auto Context::extract_single_template_arg(
     }
 }
 
-// Extract all the template arguments used to specialize this
-// ClassTemplateSpeicalizationDecl
 auto Context::extract_template_arguments(
     clang::ClassTemplateSpecializationDecl const* ctsd,
     std::vector<TemplateArg>& template_args,
@@ -481,10 +500,6 @@ auto Context::extract_template_arguments(
     }
 }
 
-// Evaluate the a constexpr boolean expression on the variable named `name` on
-// the given RecordDecl.
-// Throws if the field `name` doesn't exist, if the expression cannot be found,
-// or it cannot be evaluated
 auto evaluate_field_expression_bool(clang::RecordDecl const* rd,
                                     char const* name,
                                     clang::ASTContext& ast_context) -> bool {
@@ -520,7 +535,6 @@ auto Context::extract_class_binding(
     BindKind bind_kind,
     RuleOfSeven const& rule_of_seven,
     bool is_abstract,
-    bool is_superclass,
     std::vector<std::string> const& inherits_from,
     clang::MangleContext* mangle_ctx) -> Class {
     std::string id = get_mangled_name(crd, mangle_ctx);
@@ -549,7 +563,6 @@ auto Context::extract_class_binding(
                  bind_kind,
                  rule_of_seven,
                  is_abstract,
-                 is_superclass,
                  id};
 }
 
@@ -568,20 +581,12 @@ auto Context::insert_class_binding(std::string const& mod_id,
     // somewhere
     if (auto it = _type_to_module_map.find(id);
         it != _type_to_module_map.end()) {
-
-        std::string class_str;
-        try {
-            class_str = get_class_as_string(_decl_maps.class_map.at(id));
-        } catch (std::exception& e) {
-            BBL_THROW("could not find class id {}", id);
-        }
-
         BBL_THROW("Class {} ({}) is already bound in module {}"
                   "\n{}",
                   cls.spelling,
                   id,
                   mod.name,
-                  class_str);
+                  get_class_as_string(_decl_maps.class_map.at(id)));
     } else {
         _type_to_module_map.emplace(id, mod_id);
     }
@@ -1158,6 +1163,14 @@ auto Context::insert_function_impl(std::string const& mod_id,
     }
 }
 
+static auto create_mangle_context(clang::ASTContext& ast_context)
+    -> std::unique_ptr<clang::MangleContext> {
+    // Use the microsoft mangling always for consistency
+    return std::unique_ptr<clang::MangleContext>(
+        clang::MicrosoftMangleContext::create(ast_context,
+                                              ast_context.getDiagnostics()));
+}
+
 static auto
 extract_module_from_function_decl(clang::FunctionDecl const* fd,
                                   bbl::Context* bbl_ctx,
@@ -1235,8 +1248,7 @@ get_record_to_extract_from_construct_expr(clang::CXXConstructExpr const* cce) {
 
     // then check that it's definitely bbl::Class before we go any
     // further in case user has written something very weird...
-    if (crd->getQualifiedNameAsString() != "bbl::Class" &&
-        crd->getQualifiedNameAsString() != "bbl::ClassIncomplete") {
+    if (crd->getQualifiedNameAsString() != "bbl::Class") {
         BBL_THROW("got class binding but underlying record {} - {} "
                   "does not match bbl::Class",
                   crd->getQualifiedNameAsString(),
@@ -1246,7 +1258,7 @@ get_record_to_extract_from_construct_expr(clang::CXXConstructExpr const* cce) {
     // Now we get the type that we're binding from the template
     // argument list of the CTSD
     if (ctsd->getTemplateArgs().size() != 1) {
-        BBL_THROW("expected 1 template arguments on {}, found {}",
+        BBL_THROW("expected 1 template argument on {}, found {}",
                   ctsd->getQualifiedNameAsString(),
                   ctsd->getTemplateArgs().size());
     }
@@ -1356,39 +1368,11 @@ static BindKind search_for_bind_kind_calls(clang::Stmt const* stmt,
     return BindKind::OpaquePtr;
 }
 
-/// Returns true if there is a `.superclass()` call, false otherwise
-static bool search_for_superclass_call(clang::Stmt const* stmt,
-                                       clang::ASTContext& ast_context) {
-    if (stmt == nullptr || llvm::isa<clang::CompoundStmt>(stmt)) {
-        // if we haven't found one, default to false
-        return false;
-    }
-
-    if (clang::MemberExpr const* me = dyn_cast<clang::MemberExpr>(stmt)) {
-        if (me->getMemberDecl()->getNameAsString() == "superclass") {
-            return true;
-        }
-    }
-
-    for (const auto& parent : ast_context.getParents(*stmt)) {
-        if (search_for_superclass_call(parent.get<clang::Stmt>(),
-                                       ast_context)) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
 // recursively get all the bases of `crd` and append their mangled ids to
 // `inherits_from`
 static auto get_bases(clang::CXXRecordDecl const* crd,
                       std::vector<std::string>& inherits_from,
                       clang::MangleContext* mangle_context) -> void {
-    if (!crd->hasDefinition() || crd->getNumBases() == 0) {
-        return;
-    }
-
     for (auto const& base : crd->bases()) {
         if (base.getAccessSpecifier() == clang::AS_public) {
             clang::CXXRecordDecl const* base_crd =
@@ -1426,9 +1410,6 @@ extract_class_from_construct_expr(clang::CXXConstructExpr const* construct_expr,
     Layout layout = get_record_layout(construct_expr, *ast_context);
     BindKind bind_kind =
         search_for_bind_kind_calls(construct_expr, *ast_context);
-    bool is_superclass =
-        search_for_superclass_call(construct_expr, *ast_context);
-    SPDLOG_INFO("is superclass: {}", is_superclass);
 
     // Get the rule of seven fields from the bbl::Class decl
     clang::CXXConstructorDecl* bbl_ctor_decl = construct_expr->getConstructor();
@@ -1463,23 +1444,8 @@ extract_class_from_construct_expr(clang::CXXConstructExpr const* construct_expr,
         bbl_ctsd, "is_move_assignable", *ast_context);
     bool is_nothrow_move_assignable = evaluate_field_expression_bool(
         bbl_ctsd, "is_nothrow_move_assignable", *ast_context);
-
     bool is_destructible = evaluate_field_expression_bool(
         bbl_ctsd, "is_destructible", *ast_context);
-
-    // we need to double-check destructible here. It's possible that a library
-    // will give a type a destructor but make the delete operator private in
-    // order to prevent users from calling delete() as opposed to a custom
-    // destroy() method. OpenImageIO does this, for example.
-    for (clang::CXXMethodDecl const* method : type_record_decl->methods()) {
-        if (method->getQualifiedNameAsString().find("operator delete") !=
-                std::string::npos &&
-            method->getAccess() != clang::AS_public) {
-            is_destructible = false;
-            break;
-        }
-    }
-
     bool has_virtual_destructor = evaluate_field_expression_bool(
         bbl_ctsd, "has_virtual_destructor", *ast_context);
     bool is_abstract =
@@ -1568,7 +1534,6 @@ extract_class_from_construct_expr(clang::CXXConstructExpr const* construct_expr,
                     has_virtual_destructor,
                 },
                 is_abstract,
-                is_superclass,
                 inherits_from,
                 mangle_context);
 
@@ -1810,122 +1775,6 @@ static auto get_target_record_decl_from_member_call_expr(
     }
 }
 
-/// Given a DeclRefExpr that refers to a CXXMethodDecl and a LambdaExpr, insert
-/// the body of the lambda as new function in bblext and generate a binding to
-/// it, giving it the name the original method would have gotten. this allows us
-/// to replace actual method bindings with lambdas, which is useful for shimming
-/// functions with parameter types that are needlessly tiresome to work with in
-/// C, for instance std::string_view, where we'd much rather just pass a char
-/// const* instead
-static auto
-extract_wrapped_method_from_decl_ref_expr(clang::DeclRefExpr const* dre,
-                                          clang::LambdaExpr const* lambda_expr,
-                                          bbl::Context* bbl_ctx,
-                                          clang::ASTContext* ast_context,
-                                          clang::SourceManager& sm,
-                                          clang::MangleContext* mangle_context)
-    -> void {
-    auto const* cmd = llvm::dyn_cast<clang::CXXMethodDecl>(dre->getDecl());
-    if (!cmd) {
-        BBL_THROW("got decl ref expr but decl is not CXXMethodDecl");
-    }
-
-    // get the CXXMemberCallExpr in order to be able to find the rename string
-    // from the .m() call parameter list
-    clang::CXXMemberCallExpr const* mce =
-        find_first_ancestor_of_type<clang::CXXMemberCallExpr>(dre, ast_context);
-    if (!mce) {
-        SPDLOG_WARN("Could not get CXXMemberCallExpr from DeclRefExpr "
-                    "{}",
-                    get_source_text(dre->getSourceRange(),
-                                    ast_context->getSourceManager()));
-    }
-
-    // If there's a StringLiteral inside an ImplicitCastExpr,
-    // that will be our rename string
-    std::string rename_str;
-    for (clang::Stmt const* child : mce->children()) {
-        if (auto const* sl =
-                find_first_child_of_type<clang::StringLiteral>(child)) {
-            rename_str = sl->getString().str();
-        }
-    }
-
-    // we need to know the class in order to get the class name to build the
-    // generated function name
-    /// XXX: this will not be correct in the case of nested classes, we'll need
-    /// to handle that
-    clang::CXXRecordDecl const* crd_target =
-        get_target_record_decl_from_member_call_expr(mce);
-
-    // get the comment from the original method decl
-    std::string comment = get_comment_from_decl(cmd, ast_context);
-
-    try {
-        // get the lambda source from the bindfile and take
-        // everything from the opening parentheses to get the impl
-        clang::CXXMethodDecl const* lambda_decl =
-            lambda_expr->getCallOperator();
-        std::string lambda_source =
-            get_source_text(lambda_expr->getSourceRange(), sm);
-        lambda_source =
-            lambda_source.substr(lambda_source.find("("), std::string::npos);
-
-        // the lambda name is just the class name and the wrapped method name
-        // concatenated
-        std::string lambda_name =
-            fmt::format("{}_{}",
-                        crd_target->getName(),
-                        rename_str.empty() ? cmd->getName() : rename_str);
-
-        // extract the lambda decl as a function
-        bbl::Function function = bbl_ctx->extract_function_binding(
-            lambda_decl,
-            rename_str,
-            // because we're converting our lambda to a direct function impl
-            // it will be placed in the bblext namespace
-            fmt::format("bblext::{}", lambda_name),
-            "",
-            // take the doc comment from the wrapped method decl
-            comment,
-            mangle_context);
-
-        // override the extracted function name with the lambda name because
-        // the lambda function itself is operator()
-        function.name = lambda_name;
-        function.qualified_name = fmt::format("bblext::{}", lambda_name);
-        function.rename = "";
-
-        // the lambda source has the parameter list, trailing return and body
-        // already, just add a prefixing "auto" and the name
-        std::string lambda_impl =
-            fmt::format("auto {}{}", lambda_name, lambda_source);
-
-        // figure out what module we're in
-        std::string mod_id;
-        if (!find_containing_module(dre, ast_context, mangle_context, mod_id)) {
-            BBL_THROW("could not find containing module for {}",
-                      get_source_text(dre->getSourceRange(), sm));
-        }
-
-        // mangle the lambda as an id
-        std::string mangled_name =
-            get_mangled_name(lambda_decl, mangle_context);
-
-        // insert the generated lambda function impl.
-        // this will go in the bblext namespace
-        bbl_ctx->insert_function_impl(mod_id, lambda_impl);
-
-        // insert the generated function binding
-        bbl_ctx->insert_function_binding(
-            mod_id, mangled_name, std::move(function));
-
-    } catch (std::exception& e) {
-        BBL_RETHROW(
-            e, "could not bind method {}", cmd->getQualifiedNameAsString());
-    }
-}
-
 static auto
 extract_method_from_decl_ref_expr(clang::DeclRefExpr const* dre,
                                   bbl::Context* bbl_ctx,
@@ -1946,6 +1795,10 @@ extract_method_from_decl_ref_expr(clang::DeclRefExpr const* dre,
     std::string template_call;
     if (cmd->isFunctionTemplateSpecialization()) {
         std::string dre_text = get_source_text(dre->getSourceRange(), sm);
+        // XXX: need to figure this out
+        // std::string spell_text = get_spelling_text(dre->getSourceRange(),
+        // sm); SPDLOG_INFO("source: {}", dre_text); SPDLOG_INFO("spell: {}",
+        // spell_text);
         if (dre_text.back() == '>') {
             // this is a templated call, loop back through the string
             // and find the opening angle bracket
@@ -1977,13 +1830,13 @@ extract_method_from_decl_ref_expr(clang::DeclRefExpr const* dre,
                     get_source_text(dre->getSourceRange(),
                                     ast_context->getSourceManager()));
     }
-
     // If there's a StringLiteral inside an ImplicitCastExpr,
     // that will be our rename string
     std::string rename_str;
-    for (clang::Stmt const* child : mce->children()) {
+    if (auto const* ice =
+            find_first_child_of_type<clang::ImplicitCastExpr>(mce)) {
         if (auto const* sl =
-                find_first_child_of_type<clang::StringLiteral>(child)) {
+                find_first_child_of_type<clang::StringLiteral>(ice)) {
             rename_str = sl->getString().str();
         }
     }
@@ -2021,7 +1874,6 @@ extract_method_from_decl_ref_expr(clang::DeclRefExpr const* dre,
 
     bbl::Class* cls = bbl_ctx->get_class(target_class_id);
     if (!cls) {
-        // this shouldn't be possible in the bindings, but just to make sure
         BBL_THROW("method {} is targeting class {} but this class "
                   "is not extracted",
                   cmd->getQualifiedNameAsString(),
@@ -2031,7 +1883,7 @@ extract_method_from_decl_ref_expr(clang::DeclRefExpr const* dre,
     // extract and add the method to the corresponding class
     // methods mangled names are based on the class in which
     // they're first declared, which means we'll get
-    // colliding entries for inherited methods.
+    // "duplicate" entries for inherited methods.
     // append the name of the target class to differentiate them
     std::string method_id = get_mangled_name(cmd, mangle_context);
     method_id =
@@ -2080,15 +1932,15 @@ extract_function_from_decl_ref_expr(clang::DeclRefExpr const* dre_fn,
     // surrounding AST when binding a function `foo` is structured like:
     //
     // clang-format off
-    // 
-    // CallExpr 0x201a9cde350 <line:20:5, col:26> 'void'
-    //     |-ImplicitCastExpr 0x201a9cde338 <col:5, col:10> 'void  (*)(unsigned long long (*)(qux::Bar &&), const char *)' <FunctionToPointerDecay> 
-    //     | `-DeclRefExpr 0x201a9cde2a0 <col:5, col:10> 'void (unsigned long long (*)(qux::Bar &&), const char*)' lvalue Function 0x201a9cde178 'fn' 'void (unsigned long long(*)(qux::Bar &&), const char *)' (FunctionTemplate 0x201a90dd550 'fn')
-    //     |-UnaryOperator 0x201a9cddc68 <col:13, col:14> 'auto (*)(Bar &&) -> size_t' prefix '&' cannot overflow 
-    //     | `-DeclRefExpr  0x201a9cddbe8 <col:14> 'auto (Bar &&) -> size_t' lvalue Function 0x201a9cda1f8 'foo' 'auto (Bar &&) -> size_t'
-    //     `-ImplicitCastExpr 0x201a9cde380 <col:19> 'const char *' <ArrayToPointerDecay>
-    //       `-StringLiteral 0x201a9cddd58 <col:19> 'const char[6]' lvalue "myfoo"
-    //
+        // 
+        // CallExpr 0x201a9cde350 <line:20:5, col:26> 'void'
+        //     |-ImplicitCastExpr 0x201a9cde338 <col:5, col:10> 'void  (*)(unsigned long long (*)(qux::Bar &&), const char *)' <FunctionToPointerDecay> 
+        //     | `-DeclRefExpr 0x201a9cde2a0 <col:5, col:10> 'void (unsigned long long (*)(qux::Bar &&), const char*)' lvalue Function 0x201a9cde178 'fn' 'void (unsigned long long(*)(qux::Bar &&), const char *)' (FunctionTemplate 0x201a90dd550 'fn')
+        //     |-UnaryOperator 0x201a9cddc68 <col:13, col:14> 'auto (*)(Bar &&) -> size_t' prefix '&' cannot overflow 
+        //     | `-DeclRefExpr  0x201a9cddbe8 <col:14> 'auto (Bar &&) -> size_t' lvalue Function 0x201a9cda1f8 'foo' 'auto (Bar &&) -> size_t'
+        //     `-ImplicitCastExpr 0x201a9cde380 <col:19> 'const char *' <ArrayToPointerDecay>
+        //       `-StringLiteral 0x201a9cddd58 <col:19> 'const char[6]' lvalue "myfoo"
+        //
     // clang-format on
     // So we need to go up to the CallExpr, then back down again to the
     // other DeclRefExpr that's not "fn" but "foo". We can then pluck the
@@ -2163,6 +2015,11 @@ extract_function_from_decl_ref_expr(clang::DeclRefExpr const* dre_fn,
 
     std::string comment = get_comment_from_decl(fd, ast_context);
 
+    // Now extract the function
+    Function function = bbl_ctx->extract_function_binding(
+        fd, rename_str, spelling, template_call, comment, mangle_context);
+    std::string id = get_mangled_name(fd, mangle_context);
+
     std::string mod_id;
     if (!find_containing_module(dre_fn, ast_context, mangle_context, mod_id)) {
         BBL_THROW("could not find containing module for {}",
@@ -2170,92 +2027,13 @@ extract_function_from_decl_ref_expr(clang::DeclRefExpr const* dre_fn,
                                   ast_context->getSourceManager()));
     }
 
-    // check if there's a wrapper lambda under the CallExpr
-    if (auto const* ctoe =
-            find_first_child_of_type<clang::CXXTemporaryObjectExpr>(ce)) {
-        clang::CXXConstructorDecl const* ccd = ctoe->getConstructor();
-        if (!ccd) {
-            ctoe->dumpColor();
-            BBL_THROW(
-                "could not get CXXConstructorDecl from CXXTemporaryObjectExpr");
-        }
+    bbl_ctx->insert_function_binding(mod_id, id, std::move(function));
 
-        if (ccd->getQualifiedNameAsString().find("bbl::Wrap") != 0) {
-            BBL_THROW("expected bbl::Wrap but constructor name is {}",
-                      ccd->getQualifiedNameAsString());
-        }
-
-        auto const* le = find_first_child_of_type<clang::LambdaExpr>(ctoe);
-        if (!le) {
-            BBL_THROW("{} could not find a lambda under "
-                      "bbl::Wrap",
-                      location_to_string(ctoe, sm));
-        }
-
-        // extract the wrapping lambda and insert it as a new
-        // function in bblext:: that we'll call instead of the
-        // original method
-        // get the lambda source from the bindfile and take
-        // everything from the opening parentheses to get the impl
-        clang::CXXMethodDecl const* lambda_decl = le->getCallOperator();
-        std::string lambda_source = get_source_text(le->getSourceRange(), sm);
-        lambda_source =
-            lambda_source.substr(lambda_source.find("("), std::string::npos);
-
-        // the lambda name is just the function name
-        // concatenated
-        std::string lambda_name =
-            rename_str.empty() ? fd->getNameAsString() : rename_str;
-
-        // extract the lambda decl as a function
-        bbl::Function function = bbl_ctx->extract_function_binding(
-            lambda_decl,
-            rename_str,
-            // because we're converting our lambda to a direct function impl
-            // it will be placed in the bblext namespace
-            fmt::format("bblext::{}", lambda_name),
-            "",
-            // take the doc comment from the wrapped method decl
-            comment,
-            mangle_context);
-
-        // override the extracted function name with the lambda name because
-        // the lambda function itself is operator()
-        function.name = lambda_name;
-        function.rename = "";
-
-        // the lambda source has the parameter list, trailing return and body
-        // already, just add a prefixing "auto" and the name
-        std::string lambda_impl =
-            fmt::format("auto {}{}", lambda_name, lambda_source);
-
-        // mangle the lambda as an id
-        std::string mangled_name =
-            get_mangled_name(lambda_decl, mangle_context);
-
-        // insert the generated lambda function impl.
-        // this will go in the bblext namespace
-        bbl_ctx->insert_function_impl(mod_id, lambda_impl);
-
-        // insert the generated function binding
-        bbl_ctx->insert_function_binding(
-            mod_id, mangled_name, std::move(function));
-
-    } else {
-        // Just extract the function
-        Function function = bbl_ctx->extract_function_binding(
-            fd, rename_str, spelling, template_call, comment, mangle_context);
-        std::string id = get_mangled_name(fd, mangle_context);
-
-        bbl_ctx->insert_function_binding(mod_id, id, std::move(function));
-
-        // If the function decl is in the bblext namespace, extract the function
-        // implementation as well
-        if (is_in_namespace(fd, "bblext")) {
-            std::string function_source =
-                get_source_text(fd->getSourceRange(), sm);
-            bbl_ctx->insert_function_impl(mod_id, function_source);
-        }
+    // If the function decl is in the bblext namespace, extract the function
+    // implementation as well
+    if (is_in_namespace(fd, "bblext")) {
+        std::string function_source = get_source_text(fd->getSourceRange(), sm);
+        bbl_ctx->insert_function_impl(mod_id, function_source);
     }
 }
 
@@ -2331,8 +2109,17 @@ extract_field_from_decl_ref_expr(clang::DeclRefExpr const* dre,
     });
 }
 
-/// Given a CXXConstructExpr corresponding to a `bbl::Class<C>::Ctor<...Args>()`
-/// constructror invocation, extract the described constructor
+static auto get_as_classid(QType const& qt) -> std::optional<std::string> {
+    if (std::holds_alternative<Type>(qt.type)) {
+        Type const& type = std::get<Type>(qt.type);
+        if (std::holds_alternative<ClassId>(type.kind)) {
+            return std::get<ClassId>(type.kind).id;
+        }
+    }
+
+    return {};
+}
+
 static auto
 extract_ctor_from_construct_expr(clang::CXXConstructExpr const* cce,
                                  bbl::Context* bbl_ctx,
@@ -2372,17 +2159,19 @@ extract_ctor_from_construct_expr(clang::CXXConstructExpr const* cce,
             BBL_THROW("arg {} of constructor is not a type", i);
         }
 
-        std::string param_name;
-        int param_name_index = i;
-        if (param_name_index < param_names.size()) {
-            param_name = param_names[param_name_index]->getString().str();
-        } else {
-            // handle missing param names with auto-generated names
-            param_name = fmt::format("param{:02}", param_name_index);
-        }
+        if (i > 0) {
+            std::string param_name;
+            int param_name_index = i - 1;
+            if (param_name_index < param_names.size()) {
+                param_name = param_names[param_name_index]->getString().str();
+            } else {
+                // handle missing param names with auto-generated names
+                param_name = fmt::format("param{:02}", param_name_index);
+            }
 
-        parameters.push_back(
-            bbl::Param{param_name, std::move(std::get<QType>(arg))});
+            parameters.push_back(
+                bbl::Param{param_name, std::move(std::get<QType>(arg))});
+        }
 
         ++i;
     }
@@ -2408,55 +2197,37 @@ extract_ctor_from_construct_expr(clang::CXXConstructExpr const* cce,
     // // find the CXXConstructExpr to get the class we're
     // // attaching to
     // // XXX: handle object instance not ctor
-    auto const* cce_target =
-        find_first_descendent_of_type<clang::CXXConstructExpr>(mce);
-    if (cce_target == nullptr) {
-        BBL_THROW("could not get CXXConstructExpr from "
-                  "CXXMemberCallExpr {}",
-                  get_source_text(mce->getSourceRange(), sm));
+    // auto const* cce_target =
+    //     find_first_descendent_of_type<clang::CXXConstructExpr>(mce);
+    // if (cce_target == nullptr) {
+    //     BBL_THROW("could not get CXXConstructExpr from "
+    //               "CXXMemberCallExpr {}",
+    //               get_source_text(mce->getSourceRange(), sm));
+    // }
+
+    // // And finally get the target class that we're going to add the
+    // // constructor to
+    // clang::CXXRecordDecl const* crd_target =
+    //     get_record_to_extract_from_construct_expr(cce_target);
+    // std::string target_class_id = get_mangled_name(crd_target,
+    // mangle_context);
+
+    // the target class to attach to will be the first template argument to the
+    // Ctor constructor
+    if (!std::holds_alternative<QType>(template_args[0])) {
+        BBL_THROW("first template argument to Ctor is not a qtype in {}",
+                  get_source_text(cce->getSourceRange(), sm));
+    }
+    QType const& qt_target = std::get<QType>(template_args[0]);
+    std::optional<std::string> opt_target_class_id = get_as_classid(qt_target);
+    if (!opt_target_class_id.has_value()) {
+        BBL_THROW("first template argument to Ctor is not a class in {}",
+                  get_source_text(cce->getSourceRange(), sm));
     }
 
-    // And finally get the target class that we're going to add the
-    // constructor to
-    clang::CXXRecordDecl const* crd_target =
-        get_record_to_extract_from_construct_expr(cce_target);
-    std::string target_class_id = get_mangled_name(crd_target, mangle_context);
+    std::string target_class_id = opt_target_class_id.value();
 
-    // Try and find the actual constructor decl on the target crd
-    clang::CXXConstructorDecl const* target_ccd = nullptr;
-    for (clang::CXXConstructorDecl const* cd : crd_target->ctors()) {
-        if (cd->getNumParams() != parameters.size()) {
-            continue;
-        }
-
-        if (parameters.empty()) {
-            // this is the default constructor
-            target_ccd = cd;
-            break;
-        }
-
-        bool match = true;
-        for (int i = 0; i < parameters.size(); ++i) {
-            if (parameters[i].type !=
-                bbl_ctx->extract_qualtype(cd->parameters()[i]->getType(),
-                                          mangle_context)) {
-                match = false;
-                break;
-            }
-        }
-
-        if (match) {
-            target_ccd = cd;
-            break;
-        }
-    }
-
-    // If we could find a matching constructor, then grab any doc comment from
-    // it
-    std::string comment;
-    if (target_ccd != nullptr) {
-        comment = get_comment_from_decl(target_ccd, ast_context);
-    }
+    std::string comment = get_comment_from_decl(ccd, ast_context);
 
     bbl::Class* cls = bbl_ctx->get_class(target_class_id);
     if (cls == nullptr) {
@@ -2467,6 +2238,8 @@ extract_ctor_from_construct_expr(clang::CXXConstructExpr const* cce,
 
     // We're not actually pointing to the constructor here, so we need
     // to create a made-up id
+    // XXX: figure a way to get to the actual constructor decl. Perhaps
+    // type-matching the parameters?
     std::string ctor_id =
         fmt::format("{}/ctor/{}", rename_str, target_class_id);
 
@@ -2482,10 +2255,6 @@ extract_ctor_from_construct_expr(clang::CXXConstructExpr const* cce,
     cls->constructors.emplace_back(ctor_id);
 }
 
-/// Given a CXXMemberCallExpr that references `replace_with<T>()`, get the
-/// declaration of T and add its fields to the target class, forcing it to a
-/// value type. This allows making a replacing a type in the target library with
-/// a bit-equivalent C type
 static auto extract_replacement_type_from_member_call_expr(
     clang::CXXMemberCallExpr const* mce,
     bbl::Context* bbl_ctx,
@@ -2527,15 +2296,14 @@ static auto extract_replacement_type_from_member_call_expr(
                   get_source_text(mce->getSourceRange(), sm));
     }
 
-    // And finally get the target class that we're going to replace
+    // And finally get the target class that we're going to add the
+    // constructor to
     clang::CXXRecordDecl const* crd_target =
         get_record_to_extract_from_construct_expr(cce_target);
 
     std::string target_class_id = get_mangled_name(crd_target, mangle_context);
 
     if (bbl::Class* cls = bbl_ctx->get_class(target_class_id)) {
-        // add the fields we've extracted to the target class binding and force
-        // its bind kind to value type
         cls->fields = std::move(fields);
         cls->bind_kind = BindKind::ValueType;
     } else {
@@ -2545,9 +2313,6 @@ static auto extract_replacement_type_from_member_call_expr(
     }
 }
 
-/// Given a CXXMemberCallExpr that refers to an instance of a `smartptr_to<>()`
-/// call on a class binding, extract the information necessary to automatically
-/// loft methods from the pointee class to the bound smartptr class
 static auto
 extract_smartptr_to_from_member_call_expr(clang::CXXMemberCallExpr const* mce,
                                           bbl::Context* bbl_ctx,
@@ -2663,8 +2428,7 @@ public:
             return true;
         }
 
-        if (crd->getQualifiedNameAsString() == "bbl::Class" ||
-            crd->getQualifiedNameAsString() == "bbl::ClassIncomplete") {
+        if (crd->getQualifiedNameAsString() == "bbl::Class") {
             extract_class_from_construct_expr(
                 cce, _bbl_ctx, _ast_context, _sm, _mangle_context.get());
         } else if (crd->getQualifiedNameAsString() == "bbl::Enum") {
@@ -2674,6 +2438,16 @@ public:
 
         return true;
     }
+
+    // bool VisitCallExpr(clang::CallExpr* ce) {
+    //     clang::FunctionDecl const* fd =
+    //     llvm::dyn_cast_or_null<clang::FunctionDecl>(ce->getCalleeDecl()); if
+    //     (!fd) {
+    //         return true;
+    //     }
+
+    //     return true;
+    // }
 };
 
 class FunctionVisitor : public clang::RecursiveASTVisitor<FunctionVisitor> {
@@ -2703,66 +2477,19 @@ public:
                     find_first_ancestor_of_type<clang::CXXMemberCallExpr>(
                         dre, _ast_context)) {
 
-                // this call is definitely .m()
                 if (cmce->getMethodDecl()->getName() == "m") {
-                    // if there's a CXXTemporaryObjectExpr constructing a
-                    // bbl::Wrap under here, then we're doing a bbl::Wrap lambda
-                    // method wrapping
-                    if (auto const* ctoe = find_first_child_of_type<
-                            clang::CXXTemporaryObjectExpr>(cmce)) {
-                        clang::CXXConstructorDecl const* ccd =
-                            ctoe->getConstructor();
-                        if (!ccd) {
-                            ctoe->dumpColor();
-                            BBL_THROW("could not get constructor decl from "
-                                      "CXXTemporaryObjectExpr");
-                        }
-
-                        if (ccd->getQualifiedNameAsString().find("bbl::Wrap") ==
-                            0) {
-                            auto const* le =
-                                find_first_child_of_type<clang::LambdaExpr>(
-                                    ctoe);
-                            if (!le) {
-                                BBL_THROW("{} could not find a lambda under "
-                                          "bbl::Wrap",
-                                          location_to_string(ctoe, _sm));
-                            }
-
-                            // extract the wrapping lambda and insert it as a
-                            // new function in bblext:: that we'll call instead
-                            // of the original method
-                            extract_wrapped_method_from_decl_ref_expr(
-                                dre,
-                                le,
-                                _bbl_ctx,
-                                _ast_context,
-                                _sm,
-                                _mangle_context.get());
-                        } else {
-                            SPDLOG_ERROR("constructor name is {}",
-                                         ccd->getQualifiedNameAsString());
-                        }
-                    } else {
-                        extract_method_from_decl_ref_expr(
-                            dre,
-                            _bbl_ctx,
-                            _ast_context,
-                            _sm,
-                            _mangle_context.get());
-                    }
-
+                    extract_method_from_decl_ref_expr(dre,
+                                                      _bbl_ctx,
+                                                      _ast_context,
+                                                      _sm,
+                                                      _mangle_context.get());
                 } else {
                     SPDLOG_WARN(
                         "got CMCE but its name is {}",
                         cmce->getMethodDecl()->getQualifiedNameAsString());
                 }
             } else {
-                /// XXX: this probably means we're inside the lambda body of a
-                /// bbl:Wrap(). Need to see if this actually hurts us
-                // SPDLOG_WARN("got method but no CMCE ancestor in:\n{}\n{}",
-                //             location_to_string(dre, _sm),
-                //             expr_to_string(dre, _ast_context));
+                SPDLOG_WARN("got method but no CMCE ancestor");
             }
         } else if (auto const* fd = llvm::dyn_cast_or_null<clang::FunctionDecl>(
                        dre->getDecl())) {
@@ -2797,6 +2524,10 @@ public:
         }
 
         if (auto const* cmd = cmce->getMethodDecl()) {
+            /*if (cmd->getName() == "ctor") {
+                extract_ctor_from_member_call_expr(
+                    cmce, _bbl_ctx, _ast_context, _sm, _mangle_context.get());
+            } else*/
             if (cmd->getName() == "replace_with") {
                 extract_replacement_type_from_member_call_expr(
                     cmce, _bbl_ctx, _ast_context, _sm, _mangle_context.get());
@@ -2819,16 +2550,6 @@ public:
         return true;
     }
 };
-
-std::string Context::get_fallback_typename(std::string const& id) const {
-    // if (auto it = _decl_maps.typename_map.find(id); it !=
-    // _decl_maps.typename_map.end()) {
-    //     return it->second;
-    // } else {
-    //     return id;
-    // }
-    return id;
-}
 
 auto Context::compile_and_extract(int argc, char const** argv) noexcept(false)
     -> void {
@@ -2869,7 +2590,6 @@ auto Context::compile_and_extract(int argc, char const** argv) noexcept(false)
     // SPDLOG_INFO("building asts");
     Timer timer_ast;
     tool.buildASTs(ast_units);
-    SPDLOG_INFO("ASTs built in {}s", timer_ast.elapsed_seconds());
 
     if (ast_units.empty()) {
         BBL_THROW("no AST units generated");

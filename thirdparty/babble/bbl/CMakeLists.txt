@@ -6,21 +6,26 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Simplify installation messages
 set(CMAKE_INSTALL_MESSAGE LAZY)
 
-# bbl
 add_library(bbl STATIC 
   src/cpp_context.cpp
   src/capi.cpp
   src/astutil.cpp
+  src/process.cpp
   src/plugin.cpp
   src/api/api_cpp_context.cpp
   src/api/api_capi.cpp
 )
-add_library(babble::bbl ALIAS bbl)
 
-find_package(fmt CONFIG REQUIRED)
+if(MSVC)
+  target_sources(bbl PRIVATE src/process_win.cpp)
+else()
+  target_sources(bbl PRIVATE src/process_unix.cpp)
+  target_compile_options(bbl PRIVATE -fPIC)
+endif()
+
+
 target_link_libraries(
   bbl
-    PRIVATE fmt::fmt-header-only
     PUBLIC
       clangAST
       clangTooling 
@@ -28,6 +33,8 @@ target_link_libraries(
       clangASTMatchers 
       ${CMAKE_THREAD_LIBS_INIT}
 )
+
+add_library(babble::bbl ALIAS bbl)
 
 target_include_directories(
   bbl
@@ -40,7 +47,6 @@ target_include_directories(
 
 target_include_directories(bbl PRIVATE ${LLVM_INCLUDE_DIRS})
 
-
 add_library(bind INTERFACE)
 add_library(babble::bind ALIAS bind)
 target_include_directories(
@@ -50,47 +56,27 @@ target_include_directories(
       "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
 
-# bbl-translate
 add_executable(bbl-translate src/bbl-translate.cpp)
+
 target_link_libraries(bbl-translate 
-  PRIVATE fmt::fmt-header-only
   PUBLIC
     bbl
 )
+
 target_include_directories(
   bbl-translate
     PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/../ext/spdlog/include
 )
 
-# bbl-genbind
-add_executable(bbl-genbind src/bbl-genbind.cpp)
-target_include_directories(bbl-genbind 
-  PRIVATE ${LLVM_INCLUDE_DIRS}
-  ${CMAKE_CURRENT_SOURCE_DIR}/../ext/spdlog/include
-)
-target_link_libraries(bbl-genbind 
-  PRIVATE
-    bbl
-    fmt::fmt-header-only
-)
-
-if(UNIX)
-  target_compile_options(bbl PUBLIC -Wno-deprecated-declarations)
-  target_compile_options(bbl-genbind PUBLIC -Wno-deprecated-declarations)
-else()
-  target_compile_options(bbl PUBLIC /bigobj)
-endif()
-
 # LLVM is normally built without RTTI. Be consistent with that.
 if(UNIX AND NOT LLVM_ENABLE_RTTI)
   target_compile_options(bbl PRIVATE -fno-rtti)
-  target_compile_options(bbl-genbind PRIVATE -fno-rtti)
 endif()
 
 install(
   TARGETS 
-    bbl bbl-translate bbl-genbind bind
+    bbl bbl-translate bind
   EXPORT 
     bbl-targets
   LIBRARY 

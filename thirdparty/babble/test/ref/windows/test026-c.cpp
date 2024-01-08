@@ -20,9 +20,9 @@ extern "C" {
 using test0021_Foo_t = Foo;
 using test0021_BarShort_t = Bar<short>;
 
-int test0021_Foo_get_int(test0021_Foo_t const* _this, int const** _result) {
+int test0021_Foo_get_int(test0021_Foo_t const* _this, int* _result) {
     try {
-        *_result = &_this->get();
+        *_result = _this->get();
         return 0;
     } catch (std::exception& e) {
         _bbl_error_message = e.what();
@@ -40,9 +40,9 @@ int test0021_Foo_is_int(test0021_Foo_t const* _this, bool* _result) {
     }
 }
 
-int test0021_Foo_get_float(test0021_Foo_t const* _this, float const** _result) {
+int test0021_Foo_get_float(test0021_Foo_t const* _this, float* _result) {
     try {
-        *_result = &_this->get();
+        *_result = _this->get();
         return 0;
     } catch (std::exception& e) {
         _bbl_error_message = e.what();
@@ -60,9 +60,9 @@ int test0021_Foo_is_float(test0021_Foo_t const* _this, bool* _result) {
     }
 }
 
-int test0021_Foo_from_int(int const* value, test0021_Foo_t** _result) {
+int test0021_Foo_from_int(int value, test0021_Foo_t** _result) {
     try {
-        *_result = new Foo(*value);
+        *_result = new Foo(value);
         return 0;
     } catch (std::exception& e) {
         _bbl_error_message = e.what();
@@ -70,9 +70,9 @@ int test0021_Foo_from_int(int const* value, test0021_Foo_t** _result) {
     }
 }
 
-int test0021_Foo_from_float(float const* value, test0021_Foo_t** _result) {
+int test0021_Foo_from_float(float value, test0021_Foo_t** _result) {
     try {
-        *_result = new Foo(*value);
+        *_result = new Foo(value);
         return 0;
     } catch (std::exception& e) {
         _bbl_error_message = e.what();
