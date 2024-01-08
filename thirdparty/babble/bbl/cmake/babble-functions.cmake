@@ -50,6 +50,8 @@ function(BBL_TRANSLATE_BINDING PROJECT_NAME)
                  -I${BABBLE_RESOURCE_DIR}/include
                 "-I$<JOIN:$<TARGET_PROPERTY:babble::bind,INTERFACE_INCLUDE_DIRECTORIES>,;-I>" 
                 "-I$<JOIN:$<TARGET_PROPERTY:${TARGET_NAME},INCLUDE_DIRECTORIES>,;-I>" 
+                "$<JOIN:$<TARGET_PROPERTY:${TARGET_NAME},COMPILE_DEFINITIONS>,;>" 
+                "$<JOIN:$<TARGET_PROPERTY:${TARGET_NAME},COMPILE_OPTIONS>,;>" 
                 ${arg_COMPILE_ARGS}
                 -- 
                 ${PROJECT_NAME} 
@@ -73,6 +75,44 @@ function(BBL_TRANSLATE_BINDING PROJECT_NAME)
                 SUFFIX          
                     ".txt"
     )
+endfunction()
 
+function(BBL_GENERATE_BINDING PROJECT_NAME GENFILE NAMESPACE)
+    # God, I hate CMake so much...
+    set(TARGET_NAME "${PROJECT_NAME}-gen")
+    set(OUTPUT_PROJECT_PATH ${CMAKE_BINARY_DIR}/${PROJECT_NAME})
+    set(OUTPUT_DUMMY ${OUTPUT_PROJECT_PATH}/bbl-dummy-cpp)
+
+    set(list_args COMPILE_ARGS)
+    cmake_parse_arguments(arg "${flags}" "${args}" "${list_args}" ${ARGN})
+
+
+    add_library(${TARGET_NAME} SHARED ${GENFILE} ${OUTPUT_DUMMY})
+    target_include_directories(${TARGET_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+    set(genfile_path ${CMAKE_CURRENT_SOURCE_DIR}/${GENFILE})
+
+    add_custom_command(
+        OUTPUT ${OUTPUT_DUMMY}
+        DEPENDS ${genfile_path}
+        COMMAND 
+            ${BABBLE_GENERATE}
+                ${genfile_path} 
+                -- 
+                -std=c++17
+                -fsyntax-only
+                -fno-spell-checking
+                -idirafter ${BABBLE_RESOURCE_DIR}/include
+                "-I$<JOIN:$<TARGET_PROPERTY:babble::bind,INTERFACE_INCLUDE_DIRECTORIES>,;-I>" 
+                "-I$<JOIN:$<TARGET_PROPERTY:${TARGET_NAME},INCLUDE_DIRECTORIES>,;-I>" 
+                "$<JOIN:$<TARGET_PROPERTY:${TARGET_NAME},COMPILE_DEFINITIONS>,;>" 
+                "$<JOIN:$<TARGET_PROPERTY:${TARGET_NAME},COMPILE_OPTIONS>,;>" 
+                ${arg_COMPILE_ARGS}
+                -- 
+                ${PROJECT_NAME} 
+                ${OUTPUT_PROJECT_PATH}
+                ${NAMESPACE}
+        COMMAND_EXPAND_LISTS
+    )
 endfunction()
 

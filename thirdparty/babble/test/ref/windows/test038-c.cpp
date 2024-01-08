@@ -16,12 +16,11 @@ static thread_local std::string _bbl_error_message;
 
 extern "C" {
 
-using test002_FooFloat_t = Foo<float>;
-using test002_FooInt_t = FooInt;
+using test037_Bar_t = foo::Bar;
 
-int test002_FooFloat_bar(test002_FooFloat_t* _this, float const* a, float* _result) {
+int test037_Bar_get_int(test037_Bar_t* _this, int** _result) {
     try {
-        *_result = _this->bar(*a);
+        *_result = &_this->get_int();
         return 0;
     } catch (std::exception& e) {
         _bbl_error_message = e.what();
@@ -29,9 +28,9 @@ int test002_FooFloat_bar(test002_FooFloat_t* _this, float const* a, float* _resu
     }
 }
 
-int test002_FooFloat_bar_r(test002_FooFloat_t* _this, float* a, float* _result) {
+int test037_Bar_get_bar(test037_Bar_t* _this, test037_Bar_t const** _result) {
     try {
-        *_result = _this->bar_r(*a);
+        *_result = &_this->get_bar();
         return 0;
     } catch (std::exception& e) {
         _bbl_error_message = e.what();
@@ -39,14 +38,14 @@ int test002_FooFloat_bar_r(test002_FooFloat_t* _this, float* a, float* _result) 
     }
 }
 
-int test002_FooFloat_dtor(test002_FooFloat_t* _this) {
+int test037_Bar_dtor(test037_Bar_t* _this) {
     delete _this;
     return 0;
 }
 
-int test002_FooInt_bar(test002_FooInt_t* _this, int const* a, int* _result) {
+int test037_get_float(float** _result) {
     try {
-        *_result = _this->bar(*a);
+        *_result = &foo::get_float();
         return 0;
     } catch (std::exception& e) {
         _bbl_error_message = e.what();
@@ -54,19 +53,14 @@ int test002_FooInt_bar(test002_FooInt_t* _this, int const* a, int* _result) {
     }
 }
 
-int test002_FooInt_bar_r(test002_FooInt_t* _this, int* a, int* _result) {
+int test037_get_bar_ref(test037_Bar_t const** _result) {
     try {
-        *_result = _this->bar_r(*a);
+        *_result = &foo::get_bar_ref();
         return 0;
     } catch (std::exception& e) {
         _bbl_error_message = e.what();
         return 1;
     }
-}
-
-int test002_FooInt_dtor(test002_FooInt_t* _this) {
-    delete _this;
-    return 0;
 }
 
 } // extern "C"

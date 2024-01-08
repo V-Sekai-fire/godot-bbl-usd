@@ -3,6 +3,7 @@
 
 #include <type_traits>
 #include <cstddef>
+#include <functional>
 
 #define BBL_MODULE(name) static void bbl_bind_##name()
 
@@ -14,19 +15,40 @@ template <typename...> struct Tuple {};
 template <typename T1, typename T2> struct Pair {};
 } // namespace detail
 
-template <typename C, typename... Args> struct Ctor {
-    template <typename... CtorArgs> Ctor(CtorArgs...) {
-        // Make sure length of provided name args matches the length of the type
-        // args
-        if constexpr (sizeof...(CtorArgs) > 0) {
-            static_assert(
-                sizeof...(CtorArgs) == sizeof...(Args),
-                "size of Ctor argument list (parameter names) must match the "
-                "size of the template argument list (parameter types)");
-        }
-    }
+struct Wrap {
+    template <typename Func, typename Lambda>
+    Wrap(Func fn, Lambda wrapper) {}
+};
 
-    bool is_noexcept = std::is_nothrow_constructible<C, Args...>::value;
+template <typename Result, typename ...Args>
+using FunctionPtrT = Result(*)(Args...);
+
+template <typename C> class ClassIncomplete {
+public:
+    ClassIncomplete() {}
+    ClassIncomplete(const char* name) {}
+
+    size_t type_size = 0;
+
+    /// Alignment of the bound type
+    size_t type_align = 0;
+
+    /// Is the class abstract?
+    bool is_abstract = false;
+
+    /// @{ Rule-of-seven information
+    bool is_default_constructible = false;
+    bool is_copy_constructible = false;
+    bool is_nothrow_copy_constructible =false;
+    bool is_move_constructible = false;
+    bool is_nothrow_move_constructible =false;
+    bool is_copy_assignable = false;
+    bool is_nothrow_copy_assignable = false;
+    bool is_move_assignable = false;
+    bool is_nothrow_move_assignable = false;
+    bool is_destructible = false;
+    bool has_virtual_destructor = false;
+    /// @}
 };
 
 /// Bind a class in the current module.
@@ -64,12 +86,71 @@ public:
 
     Class(const char* name) {}
 
+    template <typename... Args> struct Ctor {
+        template <typename... CtorArgs> Ctor(CtorArgs...) {
+            // Make sure length of provided name args matches the length of the type
+            // args
+            if constexpr (sizeof...(CtorArgs) > 0) {
+                static_assert(
+                    sizeof...(CtorArgs) == sizeof...(Args),
+                    "size of Ctor argument list (parameter names) must match the "
+                    "size of the template argument list (parameter types)");
+            }
+        }
+
+        bool is_noexcept = std::is_nothrow_constructible<C, Args...>::value;
+    };
+
     /// Bind a constructor
     template <typename T = C, typename... Args>
-    Class ctor(Ctor<C, Args...> ctor, const char* rename = "") {
+    Class ctor(Ctor<Args...> ctor, const char* rename = "") {
         static_assert(std::is_constructible<T, Args...>::value,
                       "can not construct class with these arguments");
 
+        return *this;
+    }
+
+    // typedef that allows us to specify that a member function ptr must be passed
+    // as an argument
+    template <typename Ret, typename RecordT, typename ...Args>
+    using MethodPtrT = Ret(RecordT::*)(Args...);
+
+    // typedef that allows us to specify that a const member function ptr must be passed
+    // as an argument
+    template <typename Ret, typename RecordT, typename ...Args>
+    using ConstMethodPtrT = Ret(RecordT::*)(Args...) const;
+
+    // typedef that allows us to specify that a const& member function ptr must be passed
+    // as an argument.
+    // What, you didn't kmnow that const& was an actual specifier on methods?
+    // you can have const&& too, because they're aren't enough secret corners
+    // in the language...
+    template <typename Ret, typename RecordT, typename ...Args>
+    using ConstRefMethodPtrT = Ret(RecordT::*)(Args...) const&;
+
+    /// Bind a method on Class C by passing a member function pointer to it and
+    /// optionally a replacement name.
+    ///
+    /// e.g. for method `bar` on class `Foo`, do:
+    /// ```
+    /// bbl::Class<Foo>()
+    ///    .m(&Foo::bar, "mybar")
+    ///    ;
+    /// ```
+    /// Note that for overloaded methods, the specific overload to be bound must
+    /// be specified with a member-function-pointer cast. Assuming two overloads
+    /// of `void bar()`, one taking an int and one taking a float, you would do:
+    /// ```
+    /// bbl::Class<Foo>()
+    ///    .m((void (Foo::*)(int))&Foo::bar, "bar_int")
+    ///    .m((void (Foo::*)(float))&Foo::bar, "bar_float")
+    ///    ;
+    /// ```
+    // template <typename Func> Class m(Func fn, const char* rename = "") {
+    //     return *this;
+    // }
+    template <typename Result, typename RecordT, typename ...Args> Class m(MethodPtrT<Result, RecordT, Args...> fn, const char* rename = "") {
+        static_assert(std::is_base_of_v<RecordT, C>, "method is member of class that is not a base of this one");
         return *this;
     }
 
@@ -91,7 +172,70 @@ public:
     ///    .m((void (Foo::*)(float))&Foo::bar, "bar_float")
     ///    ;
     /// ```
-    template <typename Func> Class m(Func fn, const char* rename = "") {
+    // template <typename Func> Class m(Func fn, const char* rename = "") {
+    //     return *this;
+    // }
+    template <typename Result, typename RecordT, typename ...Args> Class m(ConstMethodPtrT<Result, RecordT, Args...> fn, const char* rename = "") {
+        static_assert(std::is_base_of_v<RecordT, C>, "method is member of class that is not a base of this one");
+        return *this;
+    }
+
+    /// Bind a method on Class C by passing a member function pointer to it and
+    /// optionally a replacement name.
+    ///
+    /// e.g. for method `bar` on class `Foo`, do:
+    /// ```
+    /// bbl::Class<Foo>()
+    ///    .m(&Foo::bar, "mybar")
+    ///    ;
+    /// ```
+    /// Note that for overloaded methods, the specific overload to be bound must
+    /// be specified with a member-function-pointer cast. Assuming two overloads
+    /// of `void bar()`, one taking an int and one taking a float, you would do:
+    /// ```
+    /// bbl::Class<Foo>()
+    ///    .m((void (Foo::*)(int))&Foo::bar, "bar_int")
+    ///    .m((void (Foo::*)(float))&Foo::bar, "bar_float")
+    ///    ;
+    /// ```
+    // template <typename Func> Class m(Func fn, const char* rename = "") {
+    //     return *this;
+    // }
+    template <typename Result, typename RecordT, typename ...Args> Class m(ConstRefMethodPtrT<Result, RecordT, Args...> fn, const char* rename = "") {
+        static_assert(std::is_base_of_v<RecordT, C>, "method is member of class that is not a base of this one");
+        return *this;
+    }
+
+    /// Bind a method on Class C by passing a member function pointer to it and
+    /// optionally a replacement name.
+    ///
+    /// e.g. for method `bar` on class `Foo`, do:
+    /// ```
+    /// bbl::Class<Foo>()
+    ///    .m(&Foo::bar, "mybar")
+    ///    ;
+    /// ```
+    /// Note that for overloaded methods, the specific overload to be bound must
+    /// be specified with a member-function-pointer cast. Assuming two overloads
+    /// of `void bar()`, one taking an int and one taking a float, you would do:
+    /// ```
+    /// bbl::Class<Foo>()
+    ///    .m((void (Foo::*)(int))&Foo::bar, "bar_int")
+    ///    .m((void (Foo::*)(float))&Foo::bar, "bar_float")
+    ///    ;
+    /// ```
+    // template <typename Func> Class m(Func fn, const char* rename = "") {
+    //     return *this;
+    // }
+    template <typename Result, typename ...Args> Class m(FunctionPtrT<Result, Args...> fn, const char* rename = "") {
+        return *this;
+    }
+
+    // template <typename Result, typename ...Args, typename Lambda> Class m(Wrap<MethodPtrT<Result, C, Args...>, Lambda> wrapper, char const* rename = "") {
+    //     return *this;
+    // }
+
+    Class m(Wrap wrapper, char const* rename = "") {
         return *this;
     }
 
@@ -186,7 +330,7 @@ public:
     }
 
     /// Size of the bound type
-    size_t type_size = sizeof(C);
+    size_t type_size =  sizeof(C);
 
     /// Alignment of the bound type
     size_t type_align = alignof(C);
@@ -195,27 +339,29 @@ public:
     bool is_abstract = std::is_abstract<C>::value;
 
     /// @{ Rule-of-seven information
-    bool is_default_constructible = std::is_default_constructible<C>::value;
-    bool is_copy_constructible = std::is_copy_constructible<C>::value;
-    bool is_nothrow_copy_constructible =
-        std::is_nothrow_copy_constructible<C>::value;
-    bool is_move_constructible = std::is_move_constructible<C>::value;
-    bool is_nothrow_move_constructible =
-        std::is_nothrow_move_constructible<C>::value;
-    bool is_copy_assignable = std::is_copy_assignable<C>::value;
-    bool is_nothrow_copy_assignable = std::is_nothrow_copy_assignable<C>::value;
-    bool is_move_assignable = std::is_move_assignable<C>::value;
-    bool is_nothrow_move_assignable = std::is_nothrow_move_assignable<C>::value;
-    bool is_destructible = std::is_destructible<C>::value;
-    bool has_virtual_destructor = std::has_virtual_destructor<C>::value;
+    bool is_default_constructible = std::is_default_constructible<C>::value; 
+    bool is_copy_constructible = std::is_copy_constructible<C>::value; 
+    bool is_nothrow_copy_constructible = std::is_nothrow_copy_constructible<C>::value; 
+    bool is_move_constructible = std::is_move_constructible<C>::value; 
+    bool is_nothrow_move_constructible = std::is_nothrow_move_constructible<C>::value; 
+    bool is_copy_assignable = std::is_copy_assignable<C>::value; 
+    bool is_nothrow_copy_assignable = std::is_nothrow_copy_assignable<C>::value; 
+    bool is_move_assignable = std::is_move_assignable<C>::value; 
+    bool is_nothrow_move_assignable = std::is_nothrow_move_assignable<C>::value; 
+    bool is_destructible = std::is_destructible<C>::value; 
+    bool has_virtual_destructor = std::has_virtual_destructor<C>::value; 
     /// @}
 };
 
+/// Bind a free function
 template <typename Result, typename... Args>
-void fn(Result (*fun)(Args...), const char* rename = "") {}
+void fn(FunctionPtrT<Result, Args...> fun, const char* rename = "") {}
 
-void rename_namespace(const char* from, const char* to) {}
-void prepend_module_name(bool enable) {}
+/// Bind a wrapping lambda in place of a free function
+inline void fn(Wrap wrapper, const char* rename = "") {}
+
+inline void rename_namespace(const char* from, const char* to) {}
+inline void prepend_module_name(bool enable) {}
 
 template <typename E> class Enum {
 public:

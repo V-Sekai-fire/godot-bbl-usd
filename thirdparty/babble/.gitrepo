@@ -5,8 +5,8 @@
 ;
 [subrepo]
 	remote = https://github.com/anderslanglands/babble
-	branch = v0.4.0
-	commit = 94426757057601465e7216138cd33fc61f9c9ef7
-	parent = f84432eb28e0207088e17c08bc19a03000b9173c
+	branch = v0.5.0
+	commit = dfbb15c868ee797606d77c2ba51f1be60479093e
+	parent = 02e5a20cddbd47ab33fb69f792f841067dc3dc23
 	method = merge
 	cmdver = 0.4.6

@@ -454,8 +454,8 @@ namespace foo {
 // bindfile
 BBL_MODULE(foo) {
   bbl::Class<foo::Bar>()
-    .ctor(bbl::Ctor<foo::Bar>(), "default")
-    .ctor(bbl::Ctor<foo::Bar, float>("value"), "from_float")
+    .ctor(bbl::Class<foo::Bar>::Ctor<>(), "default")
+    .ctor(bbl::Class<foo::Bar>::Ctor<float>("value"), "from_float")
   ;
 }
 ```
@@ -465,11 +465,11 @@ typedef struct foo_Bar_t foo_Bar_t;
 int foo_Bar_default(foo_Bar_t** result);
 int foo_Bar_from_float(float value, foo_Bar_t** result);
 ```
-We bind constructors using the `ctor()` method on `bbl::Class`. The `ctor()` method takes an instance of `bbl::Ctor`.
+We bind constructors using the `ctor()` method on `bbl::Class`. The `ctor()` method takes an instance of `bbl::Class::Ctor`.
 
-The template arguments to `bbl::Ctor` define the types of the arguments to the constructor. The first argument must always be the type that this constructor is for.
+The template arguments to `bbl::Class::Ctor` define the types of the arguments to the constructor.
 
-The parameters to the `bbl::Ctor` constructor optionally define the names of the generated constructor parameters. These are optional and do not need to be the same as the parameter names in the target library.
+The parameters to the `bbl::Class::Ctor` constructor optionally define the names of the generated constructor parameters. These are optional and do not need to be the same as the parameter names in the target library, but if they are specified the number of names must match the number of arguments in the `Ctor` template argument list
 
 Finally, the last argument to `ctor()` is an optional rename for the constructor function itself.
 
@@ -532,7 +532,7 @@ BBL_MODULE(foo) {
   bbl::fn(&foo::hello);
 
   bbl::Class<std::string>("String")
-    .ctor(bbl::Ctor<std::string, char const*>("str"), "from_c_str")
+    .ctor(bbl::Class<std::string>::Ctor<char const*>("str"), "from_c_str")
   ;
 }
 ```
@@ -571,6 +571,38 @@ which will generate:
 ```c
 // generated wrapper header
 foo_hello(char const* msg);
+```
+
+As of babble 0.5, it's possible to do this directly inline in the binding with...
+
+## `bbl::Wrap` - inline lambda wrappers
+We can generate the exact same result as manually creating an extension function, but without having to write or bind that function by using `bbl::Wrap`.
+
+Given a similar C++ target from the previous examples:
+```c++
+// target library header
+namespace foo {
+  void hello(std::string const& msg);
+
+  struct Bar {
+    void hello(std::string const& msg) const;
+  };
+}
+```
+we can do the replacement of `std::string const&` with `char const*` directly inline in the bindings using `bbl::Wrap`:
+```c++
+// bindfile
+BBL_MODULE(foo) {
+  bbl::fn(bbl::Wrap(&foo::hello, [](char const* msg) {
+    foo::hello(msg);
+  }));
+
+  bbl::Class<foo::Bar>
+    .m(bbl::Wrap(&foo::Bar::hello, [](foo::Bar const& bar, char const* msg) {
+      bar.hello(msg);
+    }), "hello_again");
+  ;
+}
 ```
 
 
@@ -666,8 +698,8 @@ BBL_MODULE(tst) {
 
     // we'll need these to actually modify Foo on the C side in the callback
     bbl::Class<tst::Foo>("Foo")
-        .ctor(bbl::Ctor<tst::Foo, tst::Foo const&>("other"), "copy")
-        .ctor(bbl::Ctor<tst::Foo>(), "new")
+        .ctor(bbl::Class<tst::Foo>::Ctor<tst::Foo const&>("other"), "copy")
+        .ctor(bbl::Class<tst::Foo>::Ctor<>(), "new")
         .m((tst::Foo& (tst::Foo::*)(tst::Foo const&))
             &tst::Foo::operator=, "op_eq")
         .m(&tst::Foo::set_a)
@@ -769,8 +801,8 @@ python ./run_tests.py
 ```
 
 Run individual tests with:
-`./build/bbl/bbl-translate test/test001.cpp -- -std=c++17 -Ibbl/include`
-`./build/bbl/bbl-translate test/test002.cpp -- -std=c++17 -Ibbl/include`
+`./build/bbl/bbl-translate test/test001.cpp -- -std=c++17 -Ibbl/include -- test001 -o build/test/out`
+`./build/bbl/bbl-translate test/test002.cpp -- -std=c++17 -Ibbl/include -- test002 -o build/test/out`
 ...
-`./build/bbl/bbl-translate test/test020.cpp -- -std=c++17 -Ibbl/include`
+`./build/bbl/bbl-translate test/test020.cpp -- -std=c++17 -Ibbl/include -- test020 -o build/test/out`
 ...etc.

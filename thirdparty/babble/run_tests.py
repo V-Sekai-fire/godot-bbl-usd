@@ -1,7 +1,22 @@
 import os
+import argparse
 import sys
 import difflib
 import shutil
+import platform
+
+TEST_OUTPUT_PATH = os.path.join("build", "test", "out")
+
+if os.name == "nt":
+    TEST_REF_PATH = os.path.join("test", "ref", "windows")
+else:
+    TEST_REF_PATH = os.path.join("test", "ref", "linux")
+
+parser = argparse.ArgumentParser()
+parser.add_argument('-v', '--verbose', action='store_true', help='increase verbosity')
+parser.add_argument('-u', '--update-ref', nargs="+", help='copy the test output from the build directory to the ref')
+parser.add_argument('-t', '--test', nargs="+", help='only run the tests specified')
+args = parser.parse_args()
 
 TESTS = [
     "test001",
@@ -34,19 +49,57 @@ TESTS = [
     "test029",
     "test030",
     "test031",
+    "test033",
+    "test034",
+    "test035",
+    "test036",
+    "test037",
+    "test038",
 ]
 
-TEST_OUTPUT_PATH = os.path.join("build", "test", "out")
 
-if os.name == "nt":
-    TEST_REF_PATH = os.path.join("test", "ref", "windows")
-else:
-    TEST_REF_PATH = os.path.join("test", "ref", "linux")
+if args.update_ref:
+    tests_to_copy = args.update_ref
 
-shutil.rmtree(TEST_OUTPUT_PATH)
-os.makedirs(TEST_OUTPUT_PATH, exist_ok=True)
+    if "all" in tests_to_copy:
+        tests_to_copy = TESTS
+        
+    for test in tests_to_copy:
+        tst_c_p = os.path.join(TEST_OUTPUT_PATH, f"{test}-c.cpp")
+        tst_h_p = os.path.join(TEST_OUTPUT_PATH, f"{test}-c.h")
 
-for test in TESTS:
+        ok = True
+        if not os.path.exists(tst_c_p):
+            print(f"ERROR test file {tst_c_p} does not exist")
+            ok = False
+
+        if not os.path.exists(tst_h_p):
+            print(f"ERROR test file {tst_h_p} does not exist")
+            ok = False
+
+        if not ok:
+            sys.exit(1)
+
+        shutil.copy(tst_c_p, TEST_REF_PATH)
+        shutil.copy(tst_h_p, TEST_REF_PATH)
+
+    sys.exit(0)
+
+
+if os.path.isdir(TEST_OUTPUT_PATH):
+    shutil.rmtree(TEST_OUTPUT_PATH)
+os.makedirs(TEST_OUTPUT_PATH)
+
+tests_to_run = TESTS
+
+if args.test:
+    if "all" in args.test:
+        # redundant but symetrical with the update flag
+        tests_to_run = TESTS
+    else:
+        tests_to_run = [t for t in TESTS if t in args.test]
+
+for test in tests_to_run:
     print(test)
     bindfile = f"{test}.cpp"
     bindfile_path = os.path.join("test", bindfile)
@@ -54,18 +107,25 @@ for test in TESTS:
     out_cpp_path = os.path.join(TEST_OUTPUT_PATH, f"{test}.cpp")
     out_h_path = os.path.join("build", "test", "out", f"{test}.h")
 
-    os.system(f"{exe_path} {bindfile_path} -- --std=c++17 -Ibbl/include -Ibuild/include -- {test} -o {TEST_OUTPUT_PATH}")
+    cmd = f"{exe_path} {bindfile_path} -- --std=c++17 -Ibbl/include -idirafter build/include -- {test} -o {TEST_OUTPUT_PATH}"
+    if args.verbose:
+        print(f"# {cmd}")
+    os.system(cmd)
 
 failed_tests = []
 
-for test in TESTS:
+for test in tests_to_run:
     tst_c_p = os.path.join(TEST_OUTPUT_PATH, f"{test}-c.cpp")
-    tst_h_p = os.path.join(TEST_OUTPUT_PATH, f"{test}-c.cpp")
+    tst_h_p = os.path.join(TEST_OUTPUT_PATH, f"{test}-c.h")
     ref_c_p = os.path.join(TEST_REF_PATH, f"{test}-c.cpp")
-    ref_h_p = os.path.join(TEST_REF_PATH, f"{test}-c.cpp")
+    ref_h_p = os.path.join(TEST_REF_PATH, f"{test}-c.h")
 
-    tst_c_f = open(tst_c_p)
-    tst_h_f = open(tst_h_p)
+    try:
+        tst_c_f = open(tst_c_p)
+        tst_h_f = open(tst_h_p)
+    except FileNotFoundError:
+        failed_tests.append(test)
+        continue
     tst_c = tst_c_f.readlines()
     tst_h = tst_h_f.readlines()
 
