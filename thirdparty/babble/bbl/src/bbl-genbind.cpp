@@ -902,7 +902,7 @@ install(
     return SUCCESS;
 }
 
-static auto get_operator_rename(std::string const& name) -> std::string {
+auto get_operator_rename(std::string const& name) -> std::string {
     if (name.rfind("operator==") != std::string::npos) {
         return "op_eq";
     } else if (name.rfind("operator[]") != std::string::npos) {

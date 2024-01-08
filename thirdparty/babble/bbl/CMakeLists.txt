@@ -17,8 +17,10 @@ add_library(bbl STATIC
 )
 add_library(babble::bbl ALIAS bbl)
 
+find_package(fmt CONFIG REQUIRED)
 target_link_libraries(
   bbl
+    PRIVATE fmt::fmt-header-only
     PUBLIC
       clangAST
       clangTooling 
@@ -51,6 +53,7 @@ target_include_directories(
 # bbl-translate
 add_executable(bbl-translate src/bbl-translate.cpp)
 target_link_libraries(bbl-translate 
+  PRIVATE fmt::fmt-header-only
   PUBLIC
     bbl
 )
@@ -69,6 +72,7 @@ target_include_directories(bbl-genbind
 target_link_libraries(bbl-genbind 
   PRIVATE
     bbl
+    fmt::fmt-header-only
 )
 
 if(UNIX)

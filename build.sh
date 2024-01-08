@@ -4,5 +4,15 @@
 # sudo apt-get update
 # bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)"
 # sudo apt install libclang-dev libboost-all-dev libosd-dev cmake libtbb2-dev libclang-17-dev libspdlog-dev
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPXR_ENABLE_PYTHON_SUPPORT=FALSE -DPXR_ENABLE_GL_SUPPORT=FALSE -DPXR_ENABLE_METAL_SUPPORT=FALSE -DPXR_ENABLE_VULKAN_SUPPORT=FALSE -DPXR_ENABLE_OSL_SUPPORT=FALSE -DPXR_BUILD_DOCUMENTATION=FALSE -DPXR_BUILD_USDVIEW=FALSE -DPXR_BUILD_IMAGING=FALSE
+# sudo apt install libfmt-dev
+cmake -B build-babble -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=build thirdparty/babble
+cmake --build build-babble --config Release
+cmake --install build-babble --prefix /
+
+cmake -B build-openusd -G Ninja -DCMAKE_BUILD_TYPE=Release -DPXR_ENABLE_PYTHON_SUPPORT=FALSE -DPXR_ENABLE_GL_SUPPORT=FALSE -DPXR_ENABLE_METAL_SUPPORT=FALSE -DPXR_ENABLE_VULKAN_SUPPORT=FALSE -DPXR_ENABLE_OSL_SUPPORT=FALSE -DPXR_BUILD_DOCUMENTATION=FALSE -DPXR_BUILD_USDVIEW=FALSE -DPXR_BUILD_IMAGING=FALSE thirdparty/openusd
+cmake --build build-openusd --config Release
+cmake --install build-openusd --prefix /
+
+PATH=:$PATH:bin/bin cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
+cmake --install build --prefix /
