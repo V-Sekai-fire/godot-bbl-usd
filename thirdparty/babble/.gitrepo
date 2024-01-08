@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/anderslanglands/babble
+	branch = main
+	commit = c11e8474b1b8cf517d898583b79627563956f51a
+	parent = a2532920f73a773e8db3c14043543ac17bad24fa
+	method = merge
+	cmdver = 0.4.6
