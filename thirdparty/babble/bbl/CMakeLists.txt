@@ -26,6 +26,7 @@ endif()
 
 target_link_libraries(
   bbl
+    PRIVATE fmt::fmt-header-only
     PUBLIC
       clangAST
       clangTooling 
@@ -49,6 +50,7 @@ target_include_directories(bbl PRIVATE ${LLVM_INCLUDE_DIRS})
 
 add_library(bind INTERFACE)
 add_library(babble::bind ALIAS bind)
+find_package(fmt CONFIG REQUIRED)
 target_include_directories(
   bind
     INTERFACE
@@ -59,6 +61,7 @@ target_include_directories(
 add_executable(bbl-translate src/bbl-translate.cpp)
 
 target_link_libraries(bbl-translate 
+  PRIVATE fmt::fmt-header-only
   PUBLIC
     bbl
 )
