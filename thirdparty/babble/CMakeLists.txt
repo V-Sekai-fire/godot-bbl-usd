@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION  3.15)
-project(babble VERSION 0.5.0 LANGUAGES C CXX)
+project(babble VERSION 0.6.0 LANGUAGES C CXX)
 
 find_package(Clang REQUIRED)
 string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)"
@@ -42,6 +42,7 @@ set(BABBLE_RESOURCE_DIR "${CLANG_INSTALL_PREFIX}/lib/clang/${LLVM_VERSION_MAJOR}
 # more complete example bindings
 add_subdirectory(test/smartptr)
 add_subdirectory(test/stdfunction)
+add_subdirectory(test/inheritance)
 
 # plugins
 add_subdirectory(plugins)
