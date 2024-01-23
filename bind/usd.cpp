@@ -88,6 +88,14 @@ PXR_NS::UsdStageRefPtr Stage_Open(char const* filename, PXR_NS::UsdStage::Initia
     return PXR_NS::UsdStage::Open(filename, loadSet);
 }
 
+bool StageRefPtr_ExportToString(
+    const PXR_NS::UsdStageRefPtr& stage,
+    std::string** output,
+    bool addSourceFileComment = true
+) {
+    return stage->ExportToString(*output, addSourceFileComment);
+}
+
 }
 
 
@@ -1091,8 +1099,14 @@ BBL_MODULE(usd) {
     bbl::Class<PXR_NS::UsdPrimRange::iterator>("PrimRangeIterator")
         .opaque_ptr()
         .ctor(bbl::Class<PXR_NS::UsdPrimRange::iterator>::Ctor<>(), "new")
+#if PXR_VERSION <= 2308
         .m(&PXR_NS::UsdPrimRange::iterator::operator++, "op_inc")
-        .m((PXR_NS::UsdPrimRange::iterator & (PXR_NS::UsdPrimRange::iterator::*)(PXR_NS::UsdPrimRange::iterator const&)) 
+#else
+        .m((PXR_NS::UsdPrimRange::iterator & (PXR_NS::UsdPrimRange::iterator::*)())
+            &PXR_NS::UsdPrimRange::iterator::operator++, "op_inc"
+        )
+#endif
+        .m((PXR_NS::UsdPrimRange::iterator & (PXR_NS::UsdPrimRange::iterator::*)(PXR_NS::UsdPrimRange::iterator const&))
             &PXR_NS::UsdPrimRange::iterator::operator=, "op_assign"
         )
         .m((bool(PXR_NS::UsdPrimRange::iterator::*)(PXR_NS::UsdPrimRange::iterator const&) const) 
@@ -1107,7 +1121,13 @@ BBL_MODULE(usd) {
 
     bbl::Class<PXR_NS::UsdPrimSiblingIterator>("PrimSiblingIterator")
         .m(&PXR_NS::UsdPrimSiblingIterator::operator*, "deref")
+    #if PXR_VERSION <= 2308
         .m(&PXR_NS::UsdPrimSiblingIterator::operator++, "op_inc")
+#else
+        .m((PXR_NS::UsdPrimSiblingIterator & (PXR_NS::UsdPrimSiblingIterator::*)())
+            &PXR_NS::UsdPrimSiblingIterator::operator++, "op_inc"
+        )
+#endif
     ;
 
     bbl::fn(&bblext::PrimSiblingIterator_op_eq);
@@ -1337,7 +1357,6 @@ BBL_MODULE(usd) {
 
         // Flatten & Export Utilities
         .m(&PXR_NS::UsdStage::Export)
-        .m(&PXR_NS::UsdStage::ExportToString)
         .m(&PXR_NS::UsdStage::Flatten)
 
         // PXR_NS::UsdStage Metadata
@@ -1479,6 +1498,7 @@ BBL_MODULE(usd) {
         ;
 
     bbl::fn(&bblext::Stage_Open);
+    bbl::fn(&bblext::StageRefPtr_ExportToString);
 
     bbl::Enum<PXR_NS::UsdStage::InitialLoadSet>("StageInitialLoadSet");
 
